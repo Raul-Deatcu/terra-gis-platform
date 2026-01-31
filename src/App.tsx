@@ -7,10 +7,10 @@ import {
   TerrainProvider, defined, CallbackProperty, CallbackPositionProperty, PolygonHierarchy, 
   BoundingSphere, HeadingPitchRange, 
   ColorMaterialProperty, ConstantProperty,
-  Plane, Ray, IntersectionTests, Cartesian2, VerticalOrigin, HeightReference
+  Plane, Cartesian2, VerticalOrigin, HeightReference
 } from 'cesium';
 import { 
-  Group, Text, LoadingOverlay, Button, Badge, 
+  Group, Text, Button, Badge, 
   Paper, Stack, ThemeIcon, ScrollArea, Box, Divider, ActionIcon,
   Modal, TextInput, Table, Select, Popover, ColorInput, NumberInput, SegmentedControl
 } from '@mantine/core';
@@ -18,8 +18,8 @@ import { useMediaQuery } from '@mantine/hooks'; // <--- IMPORT NOU
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { 
     IconMapPin, IconPolygon, IconRoute, IconPlus, IconTrash, 
-    IconLayersIntersect, IconTable, IconEye, IconEyeOff, IconX, IconColumns3, IconSettings, IconHandStop, IconDeviceFloppy, IconMagnet, IconEdit,
-    IconDownload, IconUpload, IconGripVertical, IconMessageCircle, IconMessageExclamation
+    IconLayersIntersect, IconTable, IconEye, IconEyeOff, IconX, IconColumns3, IconSettings, IconHandStop, IconDeviceFloppy, IconMagnet,
+    IconDownload, IconUpload, IconGripVertical, IconMessageExclamation
 } from '@tabler/icons-react';
 import { supabase } from './supabaseClient';
 import { AssetEditor, type Asset } from './AssetEditor';

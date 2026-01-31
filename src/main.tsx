@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MantineProvider, createTheme } from '@mantine/core';
-import { Ion } from 'cesium'; // <--- IMPORT NOU
 import './i18n'; // <--- IMPORT NOU
 import App from './App.tsx';
 import '@mantine/core/styles.css';

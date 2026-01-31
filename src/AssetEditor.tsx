@@ -3,7 +3,7 @@ import {
   Paper, TextInput, NumberInput, Button, Group, Title, Stack, Text, Badge, Divider, ScrollArea, Slider
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks'; // <--- IMPORT NOU
-import { IconDeviceFloppy, IconTrash, IconMapPinFilled, IconEdit } from '@tabler/icons-react';
+import { IconDeviceFloppy, IconMapPinFilled, IconEdit } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 
 interface Layer {
