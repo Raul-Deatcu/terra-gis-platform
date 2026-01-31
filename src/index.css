@@ -1,0 +1,45 @@
+body, html, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #050505;
+  color: #e0e0e0;
+}
+
+/* Ascundem logo-ul Cesium credits (optional, dar curata interfata) */
+.cesium-viewer-bottom {
+  display: none !important;
+}
+
+/* Custom Scrollbar Industrial */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3); 
+}
+::-webkit-scrollbar-thumb {
+  background: #0369A9; 
+  border-radius: 0px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #EA5906; 
+}
+
+/* Efect de gradient subtil pe butoane */
+.gradient-border {
+  position: relative;
+  background: rgba(10, 20, 30, 0.85);
+  border: 1px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(8px);
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, #0369A9, #EA5906);
+}

@@ -1,0 +1,17 @@
+else {
+                                const hierarchy = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
+                                return <Entity 
+                                    id={feature.id.toString()}
+                                    key={feature.id} 
+                                    polygon={{ 
+                                        hierarchy, 
+                                        extrudedHeight: isExtruded ? (feature.position_data[0].height + extrusionValue) : undefined, 
+                                        perPositionHeight: true, 
+                                        classificationType: undefined, 
+                                        material: materialColor, 
+                                        outline: true, 
+                                        outlineColor: outlineColor, 
+                                        outlineWidth: outlineWidth 
+                                    }} 
+                                />;
+                            }
