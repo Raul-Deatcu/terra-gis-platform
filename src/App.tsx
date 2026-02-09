@@ -981,8 +981,25 @@ return (
             </Group>
         </Paper>
 
-<Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 70 : 90, left: isTablet ? 10 : 20, bottom: openAttributeTableId ? '40%' : undefined, maxHeight: openAttributeTableId ? undefined : (isTablet ? 'calc(100dvh - 150px)' : 'calc(100dvh - 120px)'), width: isTablet ? 240 : 300, zIndex: 10, display: 'flex', flexDirection: 'column' }} radius="sm">
-    <Box p="sm" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+<Paper 
+    style={{ 
+        ...glassPanelStyle, 
+        position: 'absolute', 
+        top: isTablet ? 70 : 90, 
+        left: isTablet ? 10 : 20, 
+        bottom: openAttributeTableId ? '40%' : undefined, 
+        // Păstrăm calculul de înălțime, esențial pentru ca scroll-ul să știe unde se termină pagina
+        maxHeight: openAttributeTableId ? undefined : (isTablet ? 'calc(100dvh - 150px)' : 'calc(100dvh - 120px)'), 
+        width: isTablet ? 240 : 300, 
+        zIndex: 10, 
+        display: 'flex', 
+        flexDirection: 'column',
+        overflow: 'hidden' 
+    }} 
+    radius="sm"
+>
+    {/* HEADER-UL PANOULUI (Rămâne fix) */}
+    <Box p="sm" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
         <Group justify="space-between" mb="xs">
             <Text size="xs" fw={700} c="dimmed">{t('layers.title')} ({layers.length})</Text> 
             <Group gap={5}>
@@ -992,7 +1009,17 @@ return (
             </Group>
         </Group>
     </Box>
-    <ScrollArea style={{ flex: 1 }} p="xs">
+
+    {/* ZONA DE SCROLL - ÎNLOCUIT ScrollArea CU DIV NATIV */}
+    <div 
+        style={{ 
+            flex: 1,                 // Ocupă tot spațiul rămas
+            overflowY: 'auto',       // Activează scroll nativ (mult mai bun pe touch)
+            minHeight: 0,            // Fix pentru flexbox scroll
+            padding: 10,             // Padding interior
+            touchAction: 'pan-y'     // Îi spune browserului că aici vrem să facem scroll vertical, nu drag
+        }}
+    >
         <DragDropContext onDragEnd={handleOnDragEnd}>
             <Droppable droppableId="layers">
                 {(provided) => (
@@ -1003,15 +1030,31 @@ return (
                                 <Draggable key={layer.id} draggableId={layer.id.toString()} index={index}>
                                     {(provided) => (
                                         <div ref={provided.innerRef} {...provided.draggableProps}>
-                                            <Paper p="xs" radius="sm" style={{ backgroundColor: isActive ? 'rgba(3, 105, 169, 0.2)' : 'rgba(255,255,255,0.03)', border: isActive ? `1px solid ${COLORS.blue}` : '1px solid transparent', cursor: 'pointer' }} onClick={() => { setActiveLayerId(layer.id); setIsDrawing(false); }}>
+                                            <Paper 
+                                                p="xs" 
+                                                radius="sm" 
+                                                style={{ 
+                                                    backgroundColor: isActive ? 'rgba(3, 105, 169, 0.2)' : 'rgba(255,255,255,0.03)', 
+                                                    border: isActive ? `1px solid ${COLORS.blue}` : '1px solid transparent', 
+                                                    cursor: 'pointer',
+                                                    // IMPORTANT: Previne selectarea textului accidentală când faci scroll
+                                                    userSelect: 'none' 
+                                                }} 
+                                                onClick={() => { setActiveLayerId(layer.id); setIsDrawing(false); }}
+                                            >
                                                 <Group justify="space-between" mb={4}>
                                                     <Group gap={8}>
-                                                        <div {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center' }}><IconGripVertical size={16} color="gray" style={{ opacity: 0.5 }} /></div>
+                                                        {/* HANDLE-ul de Drag - Doar trăgând de aici se mută layer-ul */}
+                                                        <div {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center', padding: 4 }}>
+                                                            <IconGripVertical size={16} color="gray" style={{ opacity: 0.5 }} />
+                                                        </div>
+                                                        
                                                         {layer.type === 'POINT' && <IconMapPin size={16} color={COLORS.orange} style={{ opacity: 0.9 }} />}
                                                         {layer.type === 'LINE' && <IconRoute size={16} color={COLORS.blue} style={{ opacity: 0.9 }} />}
                                                         {layer.type === 'POLYGON' && <IconPolygon size={16} color={COLORS.yellow} style={{ opacity: 0.9 }} />}
                                                         {layer.type === 'COMMENT' && <IconMessageExclamation size={18} color={COLORS.orange} style={{ filter: `drop-shadow(0 0 3px ${COLORS.orange})` }} />}
                                                         {layer.type === 'MODEL' && <IconCube size={16} color="#A020F0" style={{ opacity: 0.9 }} />}
+                                                        
                                                         <Text size="sm" fw={700} c="white" style={{ maxWidth: isTablet ? 90 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{layer.name}</Text>
                                                     </Group>
                                                     <Group gap={2}>
@@ -1054,7 +1097,7 @@ return (
                 )}
             </Droppable>
         </DragDropContext>
-    </ScrollArea>
+    </div>
 </Paper>
 
         <Modal opened={!!tempLayerSettings} onClose={() => setTempLayerSettings(null)} title={t('modals.settings_title')} centered styles={{ content: { backgroundColor: '#1A1B1E', color: 'white' }, header: { backgroundColor: '#1A1B1E', color: 'white' } }}>
