@@ -981,81 +981,81 @@ return (
             </Group>
         </Paper>
 
-<Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 70 : 90, left: isTablet ? 10 : 20, bottom: openAttributeTableId ? '40%' : undefined, maxHeight: openAttributeTableId ? undefined : (isTablet ? 'calc(100dvh - 90px)' : 'calc(100dvh - 120px)'), width: isTablet ? 240 : 300, zIndex: 10, display: 'flex', flexDirection: 'column' }} radius="sm">
-            <Box p="sm" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                <Group justify="space-between" mb="xs">
-                    <Text size="xs" fw={700} c="dimmed">{t('layers.title')} ({layers.length})</Text> 
-                    <Group gap={5}>
-                        <input type="file" accept=".geojson,.json,.glb,.gltf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
-                        <Button size="compact-xs" color="terra-orange" variant="light" leftSection={<IconUpload size={14}/>} onClick={() => fileInputRef.current?.click()}>{t('common.import')}</Button>
-                        <Button size="compact-xs" color="terra-blue" variant="filled" leftSection={<IconPlus size={14}/>} onClick={() => setShowNewLayerModal(true)}>{t('layers.new_layer_btn')}</Button>
-                    </Group>
-                </Group>
-            </Box>
-            <ScrollArea style={{ flex: 1 }} p="xs">
-                <DragDropContext onDragEnd={handleOnDragEnd}>
-                    <Droppable droppableId="layers">
-                        {(provided) => (
-                            <Stack gap={8} {...provided.droppableProps} ref={provided.innerRef}>
-                                {layers.map((layer, index) => {
-                                    const isActive = activeLayerId === layer.id;
-                                    return (
-                                        <Draggable key={layer.id} draggableId={layer.id.toString()} index={index}>
-                                            {(provided) => (
-                                                <div ref={provided.innerRef} {...provided.draggableProps}>
-                                                    <Paper p="xs" radius="sm" style={{ backgroundColor: isActive ? 'rgba(3, 105, 169, 0.2)' : 'rgba(255,255,255,0.03)', border: isActive ? `1px solid ${COLORS.blue}` : '1px solid transparent', cursor: 'pointer' }} onClick={() => { setActiveLayerId(layer.id); setIsDrawing(false); }}>
-                                                        <Group justify="space-between" mb={4}>
-                                                            <Group gap={8}>
-                                                                <div {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center' }}><IconGripVertical size={16} color="gray" style={{ opacity: 0.5 }} /></div>
-                                                                {layer.type === 'POINT' && <IconMapPin size={16} color={COLORS.orange} style={{ opacity: 0.9 }} />}
-                                                                {layer.type === 'LINE' && <IconRoute size={16} color={COLORS.blue} style={{ opacity: 0.9 }} />}
-                                                                {layer.type === 'POLYGON' && <IconPolygon size={16} color={COLORS.yellow} style={{ opacity: 0.9 }} />}
-                                                                {layer.type === 'COMMENT' && <IconMessageExclamation size={18} color={COLORS.orange} style={{ filter: `drop-shadow(0 0 3px ${COLORS.orange})` }} />}
-                                                                {layer.type === 'MODEL' && <IconCube size={16} color="#A020F0" style={{ opacity: 0.9 }} />}
-                                                                <Text size="sm" fw={700} c="white" style={{ maxWidth: isTablet ? 90 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{layer.name}</Text>
-                                                            </Group>
-                                                            <Group gap={2}>
-                                                                <ActionIcon size="sm" variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); handleExportLayer(layer); }}><IconDownload size={14}/></ActionIcon>
-                                                                <ActionIcon size="sm" variant="subtle" color="terra-blue" onClick={(e) => { e.stopPropagation(); openLayerSettings(layer); }}><IconSettings size={14}/></ActionIcon>
-                                                                <ActionIcon size="sm" variant="subtle" color={layer.visible ? 'terra-yellow' : 'gray'} onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id, layer.visible); }}>{layer.visible ? <IconEye size={14}/> : <IconEyeOff size={14}/>}</ActionIcon>
-                                                                <ActionIcon size="sm" variant="subtle" color="red" onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }}><IconTrash size={14}/></ActionIcon>
-                                                            </Group>
-                                                        </Group>
-                                                        <Group justify="space-between" mb={layer.style_props.visType === 'unique' ? 8 : 0}>
-                                                            <Badge size="xs" variant="filled" color="dark">{features.filter(f => f.layer_id === layer.id).length} {t('layers.entities')}</Badge> 
-                                                            <Button size="compact-xs" variant="subtle" color="cyan" leftSection={<IconTable size={12}/>} onClick={(e) => { e.stopPropagation(); setOpenAttributeTableId(openAttributeTableId === layer.id ? null : layer.id); }}>{t('layers.table_btn')}</Button> 
-                                                        </Group>
-                                                        {layer.style_props.visType === 'unique' && layer.style_props.visColumn && (
-                                                            <Box mt="xs" p="xs" style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
-                                                                <Text size="xs" c="dimmed" mb={4}>{t('layers.legend')} ({layer.style_props.visColumn}):</Text> 
-                                                                <Stack gap={6}>
-                                                                    {Array.from(new Set(features.filter(f => f.layer_id === layer.id).map(f => f.properties[layer.style_props.visColumn!] || 'N/A'))).sort().map(val => {
-                                                                        const savedColor = layer.style_props.visColorMap ? layer.style_props.visColorMap[val] : undefined;
-                                                                        const autoColorObj = getColorForValue(val);
-                                                                        const displayColorString = savedColor || autoColorObj.toCssColorString();
-                                                                        return (
-                                                                            <Group key={val} justify="space-between" gap={8}>
-                                                                                <Text size="xs" c="white" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{val}</Text>
-                                                                                <ColorInput size="xs" format="hex" value={displayColorString} onChange={(c) => handleCategoryColorChange(layer.id, val, c)} onClick={(e) => e.stopPropagation()} styles={{ input: { width: 100, height: 26, minHeight: 26, padding: 0, paddingLeft: 30, fontSize: 11, color: 'white', backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', cursor: 'pointer'}, swatch: { width: 18, height: 18, marginLeft: 4, cursor: 'pointer' } }}/>
-                                                                            </Group>
-                                                                        );
-                                                                    })}
-                                                                </Stack>
-                                                            </Box>
-                                                        )}
-                                                    </Paper>
-                                                </div>
-                                            )}
-                                        </Draggable>
-                                    );
-                                })}
-                                {provided.placeholder}
-                            </Stack>
-                        )}
-                    </Droppable>
-                </DragDropContext>
-            </ScrollArea>
-        </Paper>
+<Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 70 : 90, left: isTablet ? 10 : 20, bottom: openAttributeTableId ? '40%' : undefined, maxHeight: openAttributeTableId ? undefined : (isTablet ? 'calc(100dvh - 150px)' : 'calc(100dvh - 120px)'), width: isTablet ? 240 : 300, zIndex: 10, display: 'flex', flexDirection: 'column' }} radius="sm">
+    <Box p="sm" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+        <Group justify="space-between" mb="xs">
+            <Text size="xs" fw={700} c="dimmed">{t('layers.title')} ({layers.length})</Text> 
+            <Group gap={5}>
+                <input type="file" accept=".geojson,.json,.glb,.gltf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+                <Button size="compact-xs" color="terra-orange" variant="light" leftSection={<IconUpload size={14}/>} onClick={() => fileInputRef.current?.click()}>{t('common.import')}</Button>
+                <Button size="compact-xs" color="terra-blue" variant="filled" leftSection={<IconPlus size={14}/>} onClick={() => setShowNewLayerModal(true)}>{t('layers.new_layer_btn')}</Button>
+            </Group>
+        </Group>
+    </Box>
+    <ScrollArea style={{ flex: 1 }} p="xs">
+        <DragDropContext onDragEnd={handleOnDragEnd}>
+            <Droppable droppableId="layers">
+                {(provided) => (
+                    <Stack gap={8} {...provided.droppableProps} ref={provided.innerRef}>
+                        {layers.map((layer, index) => {
+                            const isActive = activeLayerId === layer.id;
+                            return (
+                                <Draggable key={layer.id} draggableId={layer.id.toString()} index={index}>
+                                    {(provided) => (
+                                        <div ref={provided.innerRef} {...provided.draggableProps}>
+                                            <Paper p="xs" radius="sm" style={{ backgroundColor: isActive ? 'rgba(3, 105, 169, 0.2)' : 'rgba(255,255,255,0.03)', border: isActive ? `1px solid ${COLORS.blue}` : '1px solid transparent', cursor: 'pointer' }} onClick={() => { setActiveLayerId(layer.id); setIsDrawing(false); }}>
+                                                <Group justify="space-between" mb={4}>
+                                                    <Group gap={8}>
+                                                        <div {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center' }}><IconGripVertical size={16} color="gray" style={{ opacity: 0.5 }} /></div>
+                                                        {layer.type === 'POINT' && <IconMapPin size={16} color={COLORS.orange} style={{ opacity: 0.9 }} />}
+                                                        {layer.type === 'LINE' && <IconRoute size={16} color={COLORS.blue} style={{ opacity: 0.9 }} />}
+                                                        {layer.type === 'POLYGON' && <IconPolygon size={16} color={COLORS.yellow} style={{ opacity: 0.9 }} />}
+                                                        {layer.type === 'COMMENT' && <IconMessageExclamation size={18} color={COLORS.orange} style={{ filter: `drop-shadow(0 0 3px ${COLORS.orange})` }} />}
+                                                        {layer.type === 'MODEL' && <IconCube size={16} color="#A020F0" style={{ opacity: 0.9 }} />}
+                                                        <Text size="sm" fw={700} c="white" style={{ maxWidth: isTablet ? 90 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{layer.name}</Text>
+                                                    </Group>
+                                                    <Group gap={2}>
+                                                        <ActionIcon size="sm" variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); handleExportLayer(layer); }}><IconDownload size={14}/></ActionIcon>
+                                                        <ActionIcon size="sm" variant="subtle" color="terra-blue" onClick={(e) => { e.stopPropagation(); openLayerSettings(layer); }}><IconSettings size={14}/></ActionIcon>
+                                                        <ActionIcon size="sm" variant="subtle" color={layer.visible ? 'terra-yellow' : 'gray'} onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id, layer.visible); }}>{layer.visible ? <IconEye size={14}/> : <IconEyeOff size={14}/>}</ActionIcon>
+                                                        <ActionIcon size="sm" variant="subtle" color="red" onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }}><IconTrash size={14}/></ActionIcon>
+                                                    </Group>
+                                                </Group>
+                                                <Group justify="space-between" mb={layer.style_props.visType === 'unique' ? 8 : 0}>
+                                                    <Badge size="xs" variant="filled" color="dark">{features.filter(f => f.layer_id === layer.id).length} {t('layers.entities')}</Badge> 
+                                                    <Button size="compact-xs" variant="subtle" color="cyan" leftSection={<IconTable size={12}/>} onClick={(e) => { e.stopPropagation(); setOpenAttributeTableId(openAttributeTableId === layer.id ? null : layer.id); }}>{t('layers.table_btn')}</Button> 
+                                                </Group>
+                                                {layer.style_props.visType === 'unique' && layer.style_props.visColumn && (
+                                                    <Box mt="xs" p="xs" style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                                                        <Text size="xs" c="dimmed" mb={4}>{t('layers.legend')} ({layer.style_props.visColumn}):</Text> 
+                                                        <Stack gap={6}>
+                                                            {Array.from(new Set(features.filter(f => f.layer_id === layer.id).map(f => f.properties[layer.style_props.visColumn!] || 'N/A'))).sort().map(val => {
+                                                                const savedColor = layer.style_props.visColorMap ? layer.style_props.visColorMap[val] : undefined;
+                                                                const autoColorObj = getColorForValue(val);
+                                                                const displayColorString = savedColor || autoColorObj.toCssColorString();
+                                                                return (
+                                                                    <Group key={val} justify="space-between" gap={8}>
+                                                                        <Text size="xs" c="white" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{val}</Text>
+                                                                        <ColorInput size="xs" format="hex" value={displayColorString} onChange={(c) => handleCategoryColorChange(layer.id, val, c)} onClick={(e) => e.stopPropagation()} styles={{ input: { width: 100, height: 26, minHeight: 26, padding: 0, paddingLeft: 30, fontSize: 11, color: 'white', backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', cursor: 'pointer'}, swatch: { width: 18, height: 18, marginLeft: 4, cursor: 'pointer' } }}/>
+                                                                    </Group>
+                                                                );
+                                                            })}
+                                                        </Stack>
+                                                    </Box>
+                                                )}
+                                            </Paper>
+                                        </div>
+                                    )}
+                                </Draggable>
+                            );
+                        })}
+                        {provided.placeholder}
+                    </Stack>
+                )}
+            </Droppable>
+        </DragDropContext>
+    </ScrollArea>
+</Paper>
 
         <Modal opened={!!tempLayerSettings} onClose={() => setTempLayerSettings(null)} title={t('modals.settings_title')} centered styles={{ content: { backgroundColor: '#1A1B1E', color: 'white' }, header: { backgroundColor: '#1A1B1E', color: 'white' } }}>
              {tempLayerSettings && (<Stack>
@@ -1160,25 +1160,24 @@ return (
             </Paper>
         )}
 
-        {selectedFeatureId && (
-             <div style={{ position: 'absolute', top: isTablet ? 70 : 90, right: isTablet ? 10 : 20, zIndex: 15, display: 'flex', gap: 10, alignItems: 'flex-start', maxHeight: isTablet ? 'calc(100dvh - 80px)' : 'calc(100dvh - 110px)', overflow: 'hidden'}}>
-                 <AssetEditor 
-                    asset={featureToAsset(features.find(f => f.id === selectedFeatureId)!, layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!)}
-                    layer={layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!}
-                    isNew={false}
-                    onSave={handleSaveFeatureEdit}
-                    onDelete={handleDeleteFeature}
-                    onCancel={() => {
-                        setSelectedFeatureId(null);
-                        setLivePreviewAsset(null); 
-                    }}
-                    onStartRelocate={startRelocation}
-                    onStartVertexEdit={() => setIsEditingVertices(true)}
-                    onLiveUpdate={(updated) => setLivePreviewAsset(updated)}
-                 />
-             </div>
-        )}
-
+{selectedFeatureId && (
+     <div style={{ position: 'absolute', top: isTablet ? 70 : 90, right: isTablet ? 10 : 20, zIndex: 15, display: 'flex', gap: 10, alignItems: 'flex-start', maxHeight: isTablet ? 'calc(100dvh - 150px)' : 'calc(100dvh - 110px)', overflow: 'hidden'}}>
+         <AssetEditor 
+            asset={featureToAsset(features.find(f => f.id === selectedFeatureId)!, layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!)}
+            layer={layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!}
+            isNew={false}
+            onSave={handleSaveFeatureEdit}
+            onDelete={handleDeleteFeature}
+            onCancel={() => {
+                setSelectedFeatureId(null);
+                setLivePreviewAsset(null); 
+            }}
+            onStartRelocate={startRelocation}
+            onStartVertexEdit={() => setIsEditingVertices(true)}
+            onLiveUpdate={(updated) => setLivePreviewAsset(updated)}
+         />
+     </div>
+)}
 <Viewer 
             ref={viewerRef} full selectionIndicator={false} infoBox={false} timeline={false} animation={false} 
             navigationHelpButton={false} sceneModePicker={false} baseLayerPicker={false} homeButton={false} geocoder={false} fullscreenButton={false}
