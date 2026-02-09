@@ -924,7 +924,19 @@ const handleMouseMoveGhost = (cartesian: Cartesian3, movementPosition?: { x: num
 return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', background: '#000', cursor: (isRelocating || isEditingVertices) ? (isSnappingEnabled ? 'copy' : 'grabbing') : 'default' }}>
         
-        <Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 10 : 20, left: isTablet ? 10 : 20, zIndex: 10, borderLeft: `3px solid ${COLORS.blue}`, width: isTablet ? 'auto' : 300, minWidth: isTablet ? 200 : 300 }} p="xs" radius="sm">
+        <Paper style={{ 
+            ...glassPanelStyle, 
+            position: 'absolute', 
+            top: isTablet ? 70 : 90, 
+            left: isTablet ? 10 : 20, 
+            // Nu mai folosim 'bottom' fix, ci calculam inaltimea maxima disponibila
+            // 100dvh = inaltimea ecranului vizibil. Scadem headerul (~90px) si o marja jos (~20px)
+            maxHeight: openAttributeTableId ? '40%' : (isTablet ? 'calc(100dvh - 110px)' : 'calc(100vh - 140px)'),
+            width: isTablet ? 240 : 300, 
+            zIndex: 10, 
+            display: 'flex', 
+            flexDirection: 'column' 
+        }} radius="sm">
             <Group gap={10}>
                 <ThemeIcon size="lg" variant="filled" color="terra-blue" radius="sm">
                     <IconLayersIntersect size={20} />
@@ -1161,7 +1173,17 @@ return (
         )}
 
         {selectedFeatureId && (
-             <div style={{ position: 'absolute', top: isTablet ? 70 : 90, right: isTablet ? 10 : 20, zIndex: 15, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+<div style={{ 
+                 position: 'absolute', 
+                 top: isTablet ? 70 : 90, 
+                 right: isTablet ? 10 : 20, 
+                 zIndex: 15, 
+                 display: 'flex', 
+                 gap: 10, 
+                 alignItems: 'flex-start',
+                 // Important: maxHeight cu dvh asigura ca nu iese din ecranul util al tabletei
+                 maxHeight: isTablet ? 'calc(100dvh - 90px)' : 'auto' 
+             }}>
                  <AssetEditor 
                     asset={featureToAsset(features.find(f => f.id === selectedFeatureId)!, layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!)}
                     layer={layers.find(l => l.id === features.find(f => f.id === selectedFeatureId)?.layer_id)!}

@@ -106,7 +106,7 @@ export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, o
         backgroundColor: 'rgba(11, 15, 25, 0.95)'
       }}
     >
-      <ScrollArea.Autosize mah="80vh" type="scroll">
+      <ScrollArea.Autosize mah={isTablet ? 'calc(100dvh - 160px)' : '80vh'} type="scroll">
       <Stack gap="xs">
         <Group justify="space-between" mb="xs">
             <div style={{ lineHeight: 1.1 }}>
