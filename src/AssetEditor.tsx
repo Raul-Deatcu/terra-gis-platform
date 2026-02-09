@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 interface Layer {
     id: number;
     name: string;
-    type: 'POINT' | 'LINE' | 'POLYGON'| 'COMMENT';
+    type: 'POINT' | 'LINE' | 'POLYGON'| 'COMMENT' | 'MODEL';
     style_props: { color: string; width?: number; extrudedHeight?: number; pixelSize?: number };
     columns: { name: string; type: string }[]; 
 }
@@ -17,7 +17,7 @@ interface Layer {
 export interface Asset {
   id: number;
   name: string;
-  asset_type: 'POINT' | 'POLYGON' | 'LINE' | 'COMMENT';
+  asset_type: 'POINT' | 'POLYGON' | 'LINE' | 'COMMENT' | 'MODEL';
   position_data: any;
   style_props: any;
   properties: Record<string, string>;
@@ -33,9 +33,10 @@ interface AssetEditorProps {
   onCancel: () => void;
   onStartRelocate: () => void;
   onStartVertexEdit?: () => void;
+  onLiveUpdate?: (asset: Asset) => void; // <--- ADĂUGAT: Funcție pentru update în timp real
 }
 
-export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, onStartRelocate, onStartVertexEdit }: AssetEditorProps) {
+export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, onStartRelocate, onStartVertexEdit, onLiveUpdate }: AssetEditorProps) {
   const [formData, setFormData] = useState<Asset | null>(null);
   const { t } = useTranslation();
   
@@ -61,6 +62,19 @@ export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, o
     onSave(formData);
   };
 
+  // --- FUNCTIE NOUA PENTRU LIVE UPDATE ---
+  // Aceasta functie actualizeaza starea locala DAR trimite si modificarea catre App.tsx instant
+  const updateProperty = (key: string, value: string) => {
+      if (!formData) return;
+      const newProps = { ...formData.properties, [key]: value };
+      const updatedAsset = { ...formData, properties: newProps };
+      
+      setFormData(updatedAsset);
+      
+      // Aici apelam functia primita din parinte (App.tsx)
+      if (onLiveUpdate) onLiveUpdate(updatedAsset); 
+  };
+
   const updateCoordinate = (key: 'longitude' | 'latitude' | 'height', value: number) => {
       // ... codul existent updateCoordinate ...
       if (!formData) return;
@@ -75,7 +89,8 @@ export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, o
 
   if (!formData) return null;
 
-  const isPoint = formData.asset_type === 'POINT' || formData.asset_type === 'COMMENT';
+  const isPoint = formData.asset_type === 'POINT' || formData.asset_type === 'COMMENT' || formData.asset_type === 'MODEL';
+  const isModel = formData.asset_type === 'MODEL';
   const isPolygon = formData.asset_type === 'POLYGON';
   const extrusionKey = layer.columns?.find(c => c.name === 'extrude')?.name || 'extrudare';
 
@@ -153,6 +168,59 @@ export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, o
                     </Button>
                 )}
             </Stack>
+        )}
+
+        {/* SECȚIUNEA SCARĂ (DOAR PENTRU MODEL) */}
+{/* SECȚIUNEA MODEL 3D (SCARĂ ȘI ROTAȚIE) */}
+        {isModel && (
+             <div style={{ marginTop: 10, marginBottom: 10 }}>
+                <Divider my="xs" label="Transformări 3D" labelPosition="center" color="dark.4" />
+                
+                {/* 1. SCARĂ */}
+                <Group justify="space-between" mb={2}>
+                    <Text size="sm" fw={500} c="terra-orange">Scară (Scale)</Text>
+                    <Text size="xs" c="dimmed">{Number(formData.properties.scale || 1).toFixed(1)}x</Text>
+                </Group>
+                <Slider 
+                    min={0.1} max={20} step={0.1} color="terra-orange"
+                    value={Number(formData.properties.scale || 1)}
+                    onChange={(val) => setFormData({
+                        ...formData, 
+                        properties: { ...formData.properties, scale: String(val) }
+                    })}
+                    mb="xs"
+                />
+
+                {/* 2. ROTAȚIE (HEADING - Stânga/Dreapta) */}
+                <Group justify="space-between" mb={2}>
+                    <Text size="sm" fw={500} c="terra-blue">Rotire (Heading)</Text>
+                    <Text size="xs" c="dimmed">{Number(formData.properties.heading || 0).toFixed(0)}°</Text>
+                </Group>
+                <Slider 
+                    min={0} max={360} step={1} color="terra-blue"
+                    value={Number(formData.properties.heading || 0)}
+                    onChange={(val) => setFormData({
+                        ...formData, 
+                        properties: { ...formData.properties, heading: String(val) }
+                    })}
+                    mb="xs"
+                />
+
+                {/* 3. ROTAȚIE (PITCH & ROLL - Opțional, Expandabil) */}
+                <Group justify="space-between" mb={2}>
+                    <Text size="sm" fw={500} c="gray.5">Înclinare (Pitch)</Text>
+                    <Text size="xs" c="dimmed">{Number(formData.properties.pitch || 0).toFixed(0)}°</Text>
+                </Group>
+                <Slider 
+                    min={-90} max={90} step={1} color="gray" size="sm"
+                    value={Number(formData.properties.pitch || 0)}
+                    onChange={(val) => setFormData({
+                        ...formData, 
+                        properties: { ...formData.properties, pitch: String(val) }
+                    })}
+                    mb="xs"
+                />
+             </div>
         )}
 
         {/* SECȚIUNEA VOLUMETRIE (DOAR PENTRU POLYGON) */}

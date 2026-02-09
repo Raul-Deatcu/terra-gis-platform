@@ -1,25 +1,30 @@
-import { useEffect, useState, useRef, Fragment } from 'react';
-import { Viewer, Entity, useCesium, Cesium3DTileset, PolylineGraphics, CameraFlyTo, type CesiumComponentRef } from 'resium';
+import { useEffect, useState, useRef, Fragment, useMemo } from 'react';
+import { 
+  Viewer, Entity, useCesium, Cesium3DTileset, PolylineGraphics, CameraFlyTo, 
+  type CesiumComponentRef, LabelGraphics, PointGraphics, PolygonGraphics 
+} from 'resium';
 import { 
   Cartesian3, Color, ScreenSpaceEventType, Cartographic, 
   Math as CesiumMath, ScreenSpaceEventHandler, IonResource,
   Viewer as CesiumViewer, ClassificationType, createWorldTerrainAsync,
   TerrainProvider, defined, CallbackProperty, CallbackPositionProperty, PolygonHierarchy, 
   BoundingSphere, HeadingPitchRange, 
-  ColorMaterialProperty, ConstantProperty,
-  Plane, Cartesian2, VerticalOrigin, HeightReference
+  Plane, Cartesian2, VerticalOrigin, HeightReference,
+  IntersectionTests, HeadingPitchRoll, Transforms, Quaternion,
+  HorizontalOrigin
 } from 'cesium';
 import { 
   Group, Text, Button, Badge, 
   Paper, Stack, ThemeIcon, ScrollArea, Box, Divider, ActionIcon,
   Modal, TextInput, Table, Select, Popover, ColorInput, NumberInput, SegmentedControl
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks'; // <--- IMPORT NOU
+import { useMediaQuery } from '@mantine/hooks';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import { 
     IconMapPin, IconPolygon, IconRoute, IconPlus, IconTrash, 
     IconLayersIntersect, IconTable, IconEye, IconEyeOff, IconX, IconColumns3, IconSettings, IconHandStop, IconDeviceFloppy, IconMagnet,
-    IconDownload, IconUpload, IconGripVertical, IconMessageExclamation
+    IconDownload, IconUpload, IconGripVertical, IconMessageExclamation, IconCube,
+    IconRuler2, IconRuler, IconCrosshair, IconEraser
 } from '@tabler/icons-react';
 import { supabase } from './supabaseClient';
 import { AssetEditor, type Asset } from './AssetEditor';
@@ -30,12 +35,14 @@ interface LayerColumn { name: string; type: string; }
 interface Layer {
     id: number;
     name: string;
-    type: 'POINT' | 'LINE' | 'POLYGON' | 'COMMENT';
+    type: 'POINT' | 'LINE' | 'POLYGON' | 'COMMENT' | 'MODEL'; 
     style_props: { 
         color: string; 
         width?: number; 
         extrudedHeight?: number; 
         pixelSize?: number;
+        modelUrl?: string; 
+        scale?: number;    
         visType?: 'single' | 'unique';
         visColumn?: string;
         visColorMap?: Record<string, string>; 
@@ -43,6 +50,7 @@ interface Layer {
     visible: boolean;
     columns: LayerColumn[]; 
 }
+
 interface Feature {
     id: number;
     layer_id: number;
@@ -60,7 +68,6 @@ const featureToAsset = (feature: Feature, layer: Layer): Asset => ({
     group_id: layer.name
 });
 
-// Actualizam constanta pentru a fi sigur ca folosim exact HEX-urile brandului in Cesium
 const COLORS = {
     blue: '#0369A9', 
     orange: '#EA5906', 
@@ -70,7 +77,7 @@ const COLORS = {
     glassBorder: 'rgba(255, 255, 255, 0.1)' 
 };
 
-// --- CONSTANTA SVG PIN (Chat Icon cu Glow) ---
+// --- CONSTANTA SVG PIN ---
 const COMMENT_PIN_SVG = "data:image/svg+xml;base64," + btoa(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="16" height="16" fill="none" stroke="#EA5906" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <defs>
@@ -92,7 +99,7 @@ const COMMENT_PIN_SVG = "data:image/svg+xml;base64," + btoa(`
 </svg>
 `);
 
-// --- HELPER FUNCTION: Generare culoare din text ---
+// --- HELPER FUNCTION: Culoare din text ---
 const CATEGORY_PALETTE = [
     '#E6194B', '#3CB44B', '#FFE119', '#4363D8', '#F58231', '#911EB4', 
     '#42D4F4', '#F032E6', '#BFEF45', '#FABEBE', '#469990', '#DCBEFF'
@@ -109,12 +116,13 @@ const getColorForValue = (val: string) => {
     return Color.fromCssColorString(CATEGORY_PALETTE[index]);
 };
 
-// --- COMPONENTA MAP EVENTS (HOVER STABIL + FIX EXTRUDE + VERTEX EDIT) ---
+// --- COMPONENTA MAP EVENTS (SAFE & DECLARATIVE) ---
 interface MapEventsProps {
     drawActive: boolean;
     relocateActive: boolean;
     isEditingVertices: boolean; 
     isSnappingEnabled: boolean;
+    activeTool: 'none' | 'coords' | 'measure_dist' | 'measure_area';
     features: Feature[];
     layers: Layer[];
     selectedFeatureId: number | null;
@@ -123,13 +131,12 @@ interface MapEventsProps {
     onMouseMoveGhost: (cartesian: Cartesian3, movementPosition?: { x: number, y: number }) => void;
     onSelectionChange: (id: number | null) => void;
     onVertexSelect?: (index: number) => void; 
+    onHoverChange: (id: number | null) => void; 
 }
 
-const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEnabled, features, layers, selectedFeatureId, onLeftClick, onDoubleClick, onMouseMoveGhost, onSelectionChange, onVertexSelect }: MapEventsProps) => {
+const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEnabled, activeTool, features, layers, selectedFeatureId, onLeftClick, onDoubleClick, onMouseMoveGhost, onSelectionChange, onVertexSelect, onHoverChange }: MapEventsProps) => {
   const { viewer } = useCesium();
-  
-  const hoveredEntityRef = useRef<{ entity: any, originalColor: any, originalOutline?: any, originalSize?: any } | null>(null);
-  const selectedEntityRef = useRef<{ entity: any, originalColor: any, originalOutline?: any } | null>(null);
+  const lastHoveredIdRef = useRef<number | null>(null);
 
   useEffect(() => {
       if (viewer && !viewer.isDestroyed()) {
@@ -137,7 +144,7 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
       }
   }, [viewer]);
 
-  // --- LOGICA SNAP ---
+  // --- LOGICA SNAP (rămâne neschimbată, doar inclusă în bloc) ---
   const calculateSnap = (targetPos: Cartesian3) => {
       let nearestPos = null;
       let minDistance = 0.5; 
@@ -148,9 +155,11 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
           if (!layer || !layer.visible) return;
 
           let vertices: Cartesian3[] = [];
-          if (layer.type === 'POINT') {
-              vertices.push(Cartesian3.fromDegrees(f.position_data.longitude, f.position_data.latitude, f.position_data.height));
-          } else {
+          if (layer.type === 'POINT' || layer.type === 'MODEL' || layer.type === 'COMMENT') {
+               if (f.position_data && !Array.isArray(f.position_data)) {
+                  vertices.push(Cartesian3.fromDegrees(f.position_data.longitude, f.position_data.latitude, f.position_data.height));
+               }
+          } else if (Array.isArray(f.position_data)) {
               vertices = (f.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
           }
 
@@ -159,7 +168,7 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
               if (dist < minDistance) { minDistance = dist; nearestPos = v; }
           });
 
-          if (layer.type !== 'POINT' && vertices.length > 1) {
+          if ((layer.type === 'LINE' || layer.type === 'POLYGON') && vertices.length > 1) {
               const limit = layer.type === 'POLYGON' ? vertices.length : vertices.length - 1;
               for (let i = 0; i < limit; i++) {
                   const p1 = vertices[i];
@@ -180,57 +189,25 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
       return nearestPos;
   };
 
-  // --- HELPERE VIZUALE ---
-  const highlightEntity = (entity: any, isHover: boolean) => {
-      if (!viewer || viewer.isDestroyed()) return;
-
-      const targetColor = isHover ? Color.CYAN : Color.WHITE;
-      const targetOutline = isHover ? Color.WHITE : Color.BLACK;
-      const targetAlpha = isHover ? 0.7 : 0.9; 
-
-      if (entity.point) {
-          entity.point.color = new ConstantProperty(targetColor);
-          entity.point.pixelSize = new ConstantProperty(isHover ? 20 : 20);
-          entity.point.outlineColor = new ConstantProperty(targetOutline);
-          entity.point.outlineWidth = new ConstantProperty(isHover ? 2 : 4);
-      } else if (entity.polyline) {
-          entity.polyline.material = new ColorMaterialProperty(targetColor);
-          entity.polyline.width = new ConstantProperty(isHover ? 8 : 8);
-      } else if (entity.polygon) {
-          entity.polygon.material = new ColorMaterialProperty(targetColor.withAlpha(targetAlpha));
-          entity.polygon.outlineColor = new ConstantProperty(targetOutline);
-          entity.polygon.outlineWidth = new ConstantProperty(3);
-      }
-      viewer.scene.requestRender();
-  };
-
-  const restoreEntityVisuals = (data: { entity: any, originalColor: any, originalOutline?: any, originalSize?: any }) => {
-      if (!viewer || viewer.isDestroyed()) return;
-      try {
-          const { entity, originalColor, originalOutline, originalSize } = data;
-          if (entity.point) {
-              entity.point.color = originalColor;
-              entity.point.pixelSize = originalSize || new ConstantProperty(10);
-              entity.point.outlineColor = new ConstantProperty(Color.YELLOW);
-          } else if (entity.polyline) {
-              entity.polyline.material = originalColor;
-              entity.polyline.width = originalSize || new ConstantProperty(5);
-          } else if (entity.polygon) {
-              entity.polygon.material = originalColor;
-              entity.polygon.outlineColor = originalOutline || new ConstantProperty(Color.WHITE);
-              entity.polygon.outlineWidth = new ConstantProperty(1);
-          }
-          viewer.scene.requestRender();
-      } catch (e) { }
-  };
-
   // --- EVENT LISTENERS ---
   useEffect(() => {
-    if (!viewer || !viewer.scene) return;
+    if (!viewer || !viewer.scene || viewer.isDestroyed()) return;
+    
     const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     
     // CLICK
     handler.setInputAction((movement: any) => {
+      if (viewer.isDestroyed()) return;
+
+      // 1. Daca avem un tool activ, ignoram selectia normala
+      if (activeTool !== 'none') {
+          const pickedPosition = viewer.scene.pickPosition(movement.position);
+          if (pickedPosition) {
+              onLeftClick(pickedPosition);
+          }
+          return; 
+      }
+
       const pickedObject = viewer.scene.pick(movement.position);
 
       if (defined(pickedObject) && pickedObject.id && pickedObject.id.id && typeof pickedObject.id.id === 'string' && pickedObject.id.id.startsWith('vertex_handle_')) {
@@ -266,56 +243,42 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
 
     // MOUSE MOVE
     handler.setInputAction((movement: any) => {
-        // A. HOVER
-        if (!drawActive && !relocateActive && !isEditingVertices) {
+        if (viewer.isDestroyed()) return;
+
+        // A. HOVER DETECTION 
+        if (!drawActive && !relocateActive && !isEditingVertices && activeTool === 'none') {
             const pickedObject = viewer.scene.pick(movement.endPosition);
-            
+            let hoveredId: number | null = null;
+            let cursor = 'default';
+
             if (defined(pickedObject) && pickedObject.id) {
-                const entity = pickedObject.id;
-                
-                if (hoveredEntityRef.current?.entity === entity) {
-                    return; 
-                }
-
-                if (hoveredEntityRef.current) {
-                    restoreEntityVisuals(hoveredEntityRef.current);
-                    hoveredEntityRef.current = null;
-                }
-
-                const entityId = entity.id;
-                const isOurFeature = typeof entityId === 'string' && !isNaN(parseInt(entityId)) && !entityId.startsWith('vertex_');
-                
-                if (isOurFeature && entity !== selectedEntityRef.current?.entity) {
-                    let originalColor, originalOutline, originalSize;
-                    if (entity.point) { originalColor = entity.point.color; originalSize = entity.point.pixelSize; }
-                    else if (entity.polyline) { originalColor = entity.polyline.material; originalSize = entity.polyline.width; }
-                    else if (entity.polygon) { originalColor = entity.polygon.material; originalOutline = entity.polygon.outlineColor; }
-                    
-                    hoveredEntityRef.current = { entity, originalColor, originalOutline, originalSize };
-                    highlightEntity(entity, true); 
-                    viewer.canvas.style.cursor = 'pointer';
-                }
-            } else {
-                if (hoveredEntityRef.current) {
-                    restoreEntityVisuals(hoveredEntityRef.current);
-                    hoveredEntityRef.current = null;
-                    viewer.canvas.style.cursor = 'default';
+                const entityId = pickedObject.id.id || pickedObject.id;
+                if (typeof entityId === 'string' && !isNaN(parseInt(entityId)) && !entityId.startsWith('vertex_')) {
+                    hoveredId = parseInt(entityId);
+                    cursor = 'pointer';
                 }
             }
-        } else {
-            if (hoveredEntityRef.current) {
-                restoreEntityVisuals(hoveredEntityRef.current);
-                hoveredEntityRef.current = null;
+
+            viewer.canvas.style.cursor = cursor;
+            if (hoveredId !== lastHoveredIdRef.current) {
+                lastHoveredIdRef.current = hoveredId;
+                onHoverChange(hoveredId);
             }
-            viewer.canvas.style.cursor = (relocateActive || isEditingVertices) ? (isSnappingEnabled ? 'copy' : 'grabbing') : 'crosshair';
+        } 
+        else {
+            viewer.canvas.style.cursor = (relocateActive || isEditingVertices || activeTool !== 'none') ? 'crosshair' : 'default';
         }
 
-        // B. GHOST & SNAP
-        if (relocateActive || isEditingVertices) {
-            const picked3D = viewer.scene.pickPosition(movement.endPosition);
-            
-            let targetPos = picked3D; 
+        // B. GHOST, SNAP & MEASURE CURSOR
+        const picked3D = viewer.scene.pickPosition(movement.endPosition);
+        
+        // Trimitem pozitia mouse-ului catre App pentru update la tool-uri
+        if (activeTool !== 'none' && picked3D) {
+            onMouseMoveGhost(picked3D, movement.endPosition);
+        }
 
+        if (relocateActive || isEditingVertices) {
+            let targetPos = picked3D; 
             if (defined(targetPos) && isSnappingEnabled) {
                 const snapped = calculateSnap(targetPos);
                 if (snapped) targetPos = snapped;
@@ -331,57 +294,31 @@ const MapEvents = ({ drawActive, relocateActive, isEditingVertices, isSnappingEn
 
     }, ScreenSpaceEventType.MOUSE_MOVE);
 
-    return () => { if (!handler.isDestroyed()) handler.destroy(); };
-  }, [viewer, drawActive, relocateActive, isEditingVertices, isSnappingEnabled, onLeftClick, onDoubleClick, onMouseMoveGhost, onSelectionChange, features, layers]);
+    return () => { 
+        if (!handler.isDestroyed()) handler.destroy(); 
+    };
+  }, [viewer, drawActive, relocateActive, isEditingVertices, isSnappingEnabled, activeTool, onLeftClick, onDoubleClick, onMouseMoveGhost, onSelectionChange, features, layers, onHoverChange]);
   
-  useEffect(() => {
-      if (!viewer) return;
-      
-      if (hoveredEntityRef.current) {
-          restoreEntityVisuals(hoveredEntityRef.current);
-          hoveredEntityRef.current = null;
-      }
-
-      if (selectedEntityRef.current) {
-          restoreEntityVisuals(selectedEntityRef.current);
-          selectedEntityRef.current = null;
-      }
-
-      if (selectedFeatureId) {
-          const entity = viewer.entities.getById(selectedFeatureId.toString());
-          if (entity) {
-              let originalColor, originalOutline;
-              if (entity.point) originalColor = entity.point.color;
-              else if (entity.polyline) originalColor = entity.polyline.material;
-              else if (entity.polygon) { originalColor = entity.polygon.material; originalOutline = entity.polygon.outlineColor; }
-              
-              selectedEntityRef.current = { entity, originalColor, originalOutline };
-              highlightEntity(entity, false); 
-          }
-      }
-  }, [selectedFeatureId, viewer, features]);
-
   return null;
 }
 
 
 function App() {
-  // HOOK RESPONSIVE
   const isTablet = useMediaQuery('(max-width: 1024px)');
-  
+
   const [layers, setLayers] = useState<Layer[]>([]);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [activeLayerId, setActiveLayerId] = useState<number | null>(null);
   const [selectedFeatureId, setSelectedFeatureId] = useState<number | null>(null);
+  const [hoveredFeatureId, setHoveredFeatureId] = useState<number | null>(null); 
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [isRelocating, setIsRelocating] = useState(false);
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(false); 
   const [tempPoints, setTempPoints] = useState<Cartesian3[]>([]);
 
-  // --- STATE-URI NOI EDITARE VERTEXI ---
   const [isEditingVertices, setIsEditingVertices] = useState(false);
   const [activeVertexIndex, setActiveVertexIndex] = useState<number | null>(null);
 
@@ -399,10 +336,44 @@ function App() {
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); 
   const { t, i18n } = useTranslation(); 
+
+  // --- STARI PENTRU TOOLBAR ---
+  const [activeTool, setActiveTool] = useState<'none' | 'coords' | 'measure_dist' | 'measure_area'>('none');
+  const [measurePoints, setMeasurePoints] = useState<Cartesian3[]>([]);
+  const [cursorPos, setCursorPos] = useState<Cartesian3 | null>(null);
+
+  // --- HELPERS MASURATORI ---
+  const calculateArea = (positions: Cartesian3[]) => {
+      if (positions.length < 3) return 0;
+      let area = 0;
+      const carts = positions.map(p => Cartographic.fromCartesian(p));
+      for (let i = 0; i < carts.length; i++) {
+          const j = (i + 1) % carts.length;
+          const x1 = carts[i].longitude * 6378137 * Math.cos(carts[i].latitude);
+          const y1 = carts[i].latitude * 6378137;
+          const x2 = carts[j].longitude * 6378137 * Math.cos(carts[j].latitude);
+          const y2 = carts[j].latitude * 6378137;
+          area += (x1 * y2) - (x2 * y1);
+      }
+      return Math.abs(area / 2.0);
+  };
+
+  const clearTools = () => {
+      setActiveTool('none');
+      setMeasurePoints([]);
+      setCursorPos(null);
+      setIsDrawing(false);
+  };
+
+  const [livePreviewAsset, setLivePreviewAsset] = useState<Asset | null>(null);
   
   const changeLanguage = (lng: string) => {
     i18n.changeLanguage(lng);
   };
+
+  useEffect(() => {
+    if (!selectedFeatureId) setLivePreviewAsset(null);
+  }, [selectedFeatureId]);
 
   useEffect(() => { 
       fetchData(); 
@@ -426,16 +397,16 @@ function App() {
       if (!layer || !viewerRef.current?.cesiumElement) return;
       const viewer = viewerRef.current.cesiumElement;
 
-      if (layer.type === 'POINT') {
+      if (layer.type === 'POINT' || layer.type === 'MODEL' || layer.type === 'COMMENT') {
           const p = feature.position_data;
-          const destination = Cartesian3.fromDegrees(p.longitude, p.latitude, p.height + 200); 
-          viewer.camera.flyTo({ destination: destination, duration: 1.5 });
-      } else {
-          const positions = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
-          if (positions.length > 0) {
-              const boundingSphere = BoundingSphere.fromPoints(positions);
-              viewer.camera.flyToBoundingSphere(boundingSphere, { duration: 1.5, offset: new HeadingPitchRange(0, -0.5, boundingSphere.radius * 2.5) } as any);
+          if(p) {
+            const destination = Cartesian3.fromDegrees(p.longitude, p.latitude, p.height + 200); 
+            viewer.camera.flyTo({ destination: destination, duration: 1.5 });
           }
+      } else if (Array.isArray(feature.position_data) && feature.position_data.length > 0) {
+          const positions = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
+          const boundingSphere = BoundingSphere.fromPoints(positions);
+          viewer.camera.flyToBoundingSphere(boundingSphere, { duration: 1.5, offset: new HeadingPitchRange(0, -0.5, boundingSphere.radius * 2.5) } as any);
       }
   };
 
@@ -479,7 +450,7 @@ function App() {
       setLayers(layers.map(l => l.id === layerId ? { ...l, visible: !currentVisible } : l));
   };
   const deleteLayer = async (layerId: number) => {
-      if (!confirm(t('alerts.confirm_delete_layer'))) return; // TRADUCERE
+      if (!confirm(t('alerts.confirm_delete_layer'))) return; 
       setLoading(true);
       await supabase.from('layers').delete().eq('id', layerId);
       setLayers(layers.filter(l => l.id !== layerId));
@@ -490,7 +461,7 @@ function App() {
   const addColumnToLayer = async (layerId: number) => {
       if (!newColumnName.trim()) return;
       const layer = layers.find(l => l.id === layerId); if (!layer) return;
-      if (layer.columns.some(c => c.name === newColumnName)) return alert(t('alerts.col_exists')); // TRADUCERE
+      if (layer.columns.some(c => c.name === newColumnName)) return alert(t('alerts.col_exists')); 
       const updatedColumns = [...layer.columns, { name: newColumnName, type: 'text' }];
       setLoading(true);
       await supabase.from('layers').update({ columns: updatedColumns }).eq('id', layerId);
@@ -498,8 +469,8 @@ function App() {
       setNewColumnName(''); setLoading(false);
   };
   const deleteColumnFromLayer = async (layerId: number, colName: string) => {
-      if (colName === 'extrudare') return alert(t('alerts.delete_col_restricted')); // TRADUCERE
-      if (!confirm(t('alerts.confirm_delete_col', { colName }))) return; // TRADUCERE
+      if (colName === 'extrudare') return alert(t('alerts.delete_col_restricted')); 
+      if (!confirm(t('alerts.confirm_delete_col', { colName }))) return; 
       const layer = layers.find(l => l.id === layerId); if (!layer) return;
       const updatedColumns = layer.columns.filter(c => c.name !== colName);
       setLoading(true);
@@ -507,15 +478,40 @@ function App() {
       setLayers(layers.map(l => l.id === layerId ? { ...l, columns: updatedColumns } : l));
       setLoading(false);
   };
+
   const handleSaveFeatureEdit = async (editedAsset: Asset) => {
-      setLoading(true);
-      const propertiesToSave = { ...editedAsset.properties, name: editedAsset.name };
-      await supabase.from('features').update({ position_data: editedAsset.position_data, properties: propertiesToSave }).eq('id', editedAsset.id);
-      setFeatures(features.map(f => f.id === editedAsset.id ? { ...f, position_data: editedAsset.position_data, properties: propertiesToSave as any } : f));
-      setSelectedFeatureId(null); setLoading(false);
+    setLoading(true);
+    
+    // Includem toate proprietățile (scale, heading, pitch etc.) în salvare
+    const propertiesToSave = { 
+        ...editedAsset.properties, 
+        name: editedAsset.name 
+    };
+
+    const { error } = await supabase
+        .from('features')
+        .update({ 
+            position_data: editedAsset.position_data, 
+            properties: propertiesToSave 
+        })
+        .eq('id', editedAsset.id);
+
+    if (!error) {
+        setFeatures(features.map(f => 
+            f.id === editedAsset.id 
+            ? { ...f, position_data: editedAsset.position_data, properties: propertiesToSave as any } 
+            : f
+        ));
+        
+        // Resetăm preview-ul live după ce salvarea a reușit
+        setLivePreviewAsset(null);
+        setSelectedFeatureId(null); 
+    }
+    setLoading(false);
   };
+
   const handleDeleteFeature = async (id: number) => {
-      if(!confirm(t('alerts.confirm_delete_feature'))) return; // TRADUCERE
+      if(!confirm(t('alerts.confirm_delete_feature'))) return; 
       await supabase.from('features').delete().eq('id', id);
       setFeatures(features.filter(f => f.id !== id));
       setSelectedFeatureId(null);
@@ -523,7 +519,7 @@ function App() {
 
   // --- HELPER 1: Logică pentru Relocare (Mutare totală) ---
   const updateGhostForRelocation = (targetPosition: Cartesian3, feature: any, layer: any) => {
-      if (layer.type === 'POINT') {
+      if (layer.type === 'POINT' || layer.type === 'MODEL' || layer.type === 'COMMENT') {
           ghostPositionRef.current = targetPosition;
       } else {
           const oldFirstPoint = (feature.position_data as any[])[0];
@@ -537,29 +533,32 @@ function App() {
       }
   };
 
-  // --- HELPER 2: Logică PURĂ 3D pentru Editare Vertex (Fix TypeScript Error) ---
+  // --- HELPER 2: Logică HIBRIDĂ (Plan + Lume 3D) ---
   const updateGhostForVertex = (movementPosition: { x: number, y: number }, feature: any) => {
-      // 1. Validări de bază
-      if (!viewerRef.current?.cesiumElement || activeVertexIndex === null) return;
+      if (!viewerRef.current?.cesiumElement || activeVertexIndex === null || !dragPlaneRef.current) return;
       
       const viewer = viewerRef.current.cesiumElement;
       const cart2 = new Cartesian2(movementPosition.x, movementPosition.y);
 
-      // 2. Încercăm să luăm poziția de pe obiecte 3D
-      let newPos: Cartesian3 | undefined = viewer.scene.pickPosition(cart2);
+      const pickedPos = viewer.scene.pickPosition(cart2);
 
-      // 3. Fallback: Raycasting pe glob
-      if (!defined(newPos)) {
-             const ray = viewer.camera.getPickRay(cart2);
-             if (ray) {
-                 newPos = viewer.scene.globe.pick(ray, viewer.scene);
-             }
+      let planePos = null;
+      const ray = viewer.camera.getPickRay(cart2);
+      if (ray) {
+           planePos = IntersectionTests.rayPlane(ray, dragPlaneRef.current);
       }
 
-      // 4. Aplicăm poziția
-      if (defined(newPos) && newPos) {
+      let finalPos = null;
+      
+      if (defined(pickedPos)) {
+          finalPos = pickedPos;
+      }
+      else if (defined(planePos)) {
+          finalPos = planePos;
+      }
+
+      if (defined(finalPos)) {
           let originalPositions: Cartesian3[] = [];
-          
           if (Array.isArray(feature.position_data)) {
               originalPositions = feature.position_data.map((p: any) => 
                   Cartesian3.fromDegrees(p.longitude, p.latitude, p.height)
@@ -570,14 +569,19 @@ function App() {
           }
           
           const newPositions = [...originalPositions];
-          newPositions[activeVertexIndex] = newPos; 
+          newPositions[activeVertexIndex] = finalPos!; 
           
           ghostPositionRef.current = newPositions;
       }
   };
 
-  const handleMouseMoveGhost = (cartesian: Cartesian3, movementPosition?: { x: number, y: number }) => {
-      // 1. Guard Clauses (Validări rapide)
+const handleMouseMoveGhost = (cartesian: Cartesian3, movementPosition?: { x: number, y: number }) => {
+      // 1. Update cursor pentru masuratori
+      if (activeTool === 'measure_dist' || activeTool === 'measure_area') {
+          setCursorPos(cartesian);
+      }
+
+      // 2. Logica veche de editare
       if ((!isRelocating && !isEditingVertices) || !selectedFeatureId) return;
       
       const feature = features.find(f => f.id === selectedFeatureId);
@@ -585,7 +589,6 @@ function App() {
       
       if (!feature || !layer) return;
 
-      // 2. Ramificare Logică
       if (isRelocating) {
           updateGhostForRelocation(cartesian, feature, layer);
       } 
@@ -606,7 +609,7 @@ function App() {
       setIsRelocating(true);
   };
 
-  // --- FIX PENTRU PUNCTE (Rezolvă DeveloperError) ---
+  // --- CALLBACK PROPERTIES PENTRU GHOST (SAFE) ---
   const ghostPointPosition = new CallbackPositionProperty(() => {
       const pos = ghostPositionRef.current;
       if (Array.isArray(pos) && pos.length > 0) {
@@ -614,17 +617,27 @@ function App() {
       }
       return pos;
   }, false);
+  
   const ghostShapePositions = new CallbackProperty(() => ghostPositionRef.current || [], false);
   const ghostPolygonHierarchy = new CallbackProperty(() => new PolygonHierarchy(ghostPositionRef.current || []), false);
 
   const handleMapClick = (cartesian: Cartesian3) => {
-      // 1. Confirmare Relocare
+      // 1. Logica pentru Tools
+      if (activeTool !== 'none') {
+          if (activeTool === 'coords') {
+              setMeasurePoints([cartesian]);
+          } else {
+              setMeasurePoints([...measurePoints, cartesian]);
+          }
+          return;
+      }
+
+      // 2. Logica existenta
       if (isRelocating && selectedFeatureId) {
           const finalPos = ghostPositionRef.current;
           if(finalPos) confirmGeometryUpdate(selectedFeatureId, finalPos);
           return;
       }
-      // 2. Confirmare Editare Vertex
       if (isEditingVertices && activeVertexIndex !== null && selectedFeatureId) {
           const finalPos = ghostPositionRef.current;
           if (finalPos) {
@@ -652,12 +665,11 @@ function App() {
       setLoading(true);
       let newPosDataDb: any;
 
-      if (layer.type === 'POINT' || layer.type === 'COMMENT') {
+      if (layer.type === 'POINT' || layer.type === 'COMMENT' || layer.type === 'MODEL') {
           let singlePos = rawPosData;
           if (Array.isArray(rawPosData)) {
               singlePos = rawPosData[0];
           }
-          
           const c = Cartographic.fromCartesian(singlePos as Cartesian3);
           newPosDataDb = { 
               longitude: CesiumMath.toDegrees(c.longitude), 
@@ -687,16 +699,16 @@ function App() {
   const handleMapDoubleClick = () => {
       const activeLayer = layers.find(l => l.id === activeLayerId);
       
-      if (!isDrawing || !activeLayer || activeLayer.type === 'POINT' || activeLayer.type === 'COMMENT') return;
+      if (!isDrawing || !activeLayer || activeLayer.type === 'POINT' || activeLayer.type === 'COMMENT' || activeLayer.type === 'MODEL') return;
       
-      if (tempPoints.length < 2) return alert(t('alerts.too_few_points')); // TRADUCERE
+      if (tempPoints.length < 2) return alert(t('alerts.too_few_points')); 
       saveNewFeature(activeLayer, tempPoints);
   };
 
   const saveNewFeature = async (layer: Layer, positions: Cartesian3[]) => {
       setLoading(true);
       
-      const isSinglePoint = layer.type === 'POINT' || layer.type === 'COMMENT';
+      const isSinglePoint = layer.type === 'POINT' || layer.type === 'COMMENT' || layer.type === 'MODEL';
 
       const coords = isSinglePoint
         ? { 
@@ -722,7 +734,6 @@ function App() {
   const activeTableLayer = layers.find(l => l.id === openAttributeTableId);
   const activeTableFeatures = features.filter(f => f.layer_id === openAttributeTableId);
 
-  // --- FUNCȚIE EXPORT GEOJSON ---
   const handleExportLayer = (layer: Layer) => {
       const layerFeatures = features.filter(f => f.layer_id === layer.id);
       
@@ -730,7 +741,7 @@ function App() {
           let geometry: any;
           const pos = f.position_data;
 
-          if (layer.type === 'POINT') {
+          if (layer.type === 'POINT' || layer.type === 'MODEL' || layer.type === 'COMMENT') {
               geometry = {
                   type: "Point",
                   coordinates: [pos.longitude, pos.latitude, pos.height || 0]
@@ -777,136 +788,127 @@ function App() {
       downloadAnchorNode.remove();
   };
 
-  // --- FUNCȚIE IMPORT GEOJSON (CORECATĂ PENTRU SQL SUPABASE) ---
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
-
       const inputElement = event.target;
-      
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-          try {
-              const text = e.target?.result;
-              if (typeof text !== 'string') return;
+      const fileNameLower = file.name.toLowerCase();
+
+      try {
+          setLoading(true);
+
+          if (fileNameLower.endsWith('.glb') || fileNameLower.endsWith('.gltf')) {
+              const fileExt = fileNameLower.split('.').pop();
+              const uniqueName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
               
-              const geoJson = JSON.parse(text);
-              if (!geoJson.features || !Array.isArray(geoJson.features)) {
-                  throw new Error(t('alerts.format_error')); // TRADUCERE
-              }
+              const { data: uploadData, error: uploadError } = await supabase.storage
+                  .from('models') 
+                  .upload(uniqueName, file);
 
-              setLoading(true);
+              if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
-              const firstFeature = geoJson.features.find((f: any) => f.geometry);
-              if (!firstFeature) throw new Error(t('alerts.no_geo_error')); // TRADUCERE
+              const { data: { publicUrl } } = supabase.storage.from('models').getPublicUrl(uniqueName);
 
-              const firstType = firstFeature.geometry.type;
-              let layerType: 'POINT' | 'LINE' | 'POLYGON' = 'POINT';
-              
-              if (firstType === 'Point' || firstType === 'MultiPoint') layerType = 'POINT';
-              else if (firstType === 'LineString' || firstType === 'MultiLineString') layerType = 'LINE';
-              else if (firstType === 'Polygon' || firstType === 'MultiPolygon') layerType = 'POLYGON';
-              else {
-                  throw new Error(t('alerts.type_error', { type: firstType })); // TRADUCERE
-              }
-
-              const allKeys = new Set<string>();
-              geoJson.features.forEach((f: any) => {
-                  if (f.properties) Object.keys(f.properties).forEach(k => allKeys.add(k));
-              });
-              allKeys.add('name');
-              
-              const columns = Array.from(allKeys).map(k => ({ name: k, type: 'text' }));
-              if (layerType === 'POLYGON' && !allKeys.has('extrudare')) {
-                  columns.push({ name: 'extrudare', type: 'number' });
-              }
-
-              const timeSuffix = new Date().toLocaleTimeString('ro-RO').replace(/:/g, '');
-              const baseName = file.name.replace(/\.(geojson|json)$/i, '');
-              const layerName = `${baseName} (Import ${timeSuffix})`;
-
-              const defaultStyle = layerType === 'POINT' ? { color: COLORS.orange, pixelSize: 15 } 
-                  : layerType === 'LINE' ? { color: COLORS.cyan, width: 5 } 
-                  : { color: COLORS.blue, extrudedHeight: 0 };
-
+              const layerName = file.name.replace(/\.(glb|gltf)$/i, '');
               const { data: layerData, error: layerError } = await supabase
                   .from('layers')
                   .insert([{ 
                       name: layerName, 
-                      type: layerType, 
-                      style_props: defaultStyle, 
+                      type: 'MODEL', 
+                      style_props: { scale: 1, modelUrl: publicUrl, color: '#ffffff' }, 
                       visible: true, 
-                      columns: columns 
+                      columns: [{ name: 'descriere', type: 'text' }] 
                   }])
                   .select();
 
-              if (layerError) throw new Error(t('alerts.db_layer_error', { message: layerError.message })); // TRADUCERE
-              if (!layerData) throw new Error(t('alerts.layer_create_error')); // TRADUCERE
-              
+              if (layerError || !layerData) throw new Error(t('alerts.layer_create_error'));
               const newLayerId = layerData[0].id;
 
-              const featuresToInsert = geoJson.features.map((f: any) => {
-                  const props = f.properties || {};
-                  
-                  if (!props.name) {
-                      props.name = f.id || `Feature ${layerType}`;
-                  }
-                  
-                  if (layerType === 'POLYGON' && !props.extrudare) {
-                      props.extrudare = '0';
-                  }
-
-                  let posData: any = null;
-                  const coords = f.geometry.coordinates;
-
-                  if (layerType === 'POINT') {
-                      const pt = (f.geometry.type === 'MultiPoint') ? coords[0] : coords;
-                      posData = { longitude: Number(pt[0]), latitude: Number(pt[1]), height: Number(pt[2] || 0) };
-                  } 
-                  else if (layerType === 'LINE') {
-                      const lineCoords = (f.geometry.type === 'MultiLineString') ? coords[0] : coords;
-                      posData = lineCoords.map((c: any) => ({ 
-                          longitude: Number(c[0]), latitude: Number(c[1]), height: Number(c[2] || 0) 
-                      }));
-                  } 
-                  else if (layerType === 'POLYGON') {
-                      const ring = (f.geometry.type === 'MultiPolygon') ? coords[0][0] : coords[0];
-                      posData = ring.map((c: any) => ({ 
-                          longitude: Number(c[0]), latitude: Number(c[1]), height: Number(c[2] || 0) 
-                      }));
-                  }
-
-                  return {
-                      layer_id: newLayerId,
-                      position_data: posData,
-                      properties: props 
+              let position = { longitude: 26.043844, latitude: 44.442821, height: 0 }; // Default
+              
+              if (viewerRef.current?.cesiumElement) {
+                  const camera = viewerRef.current.cesiumElement.camera;
+                  position = {
+                      longitude: CesiumMath.toDegrees(camera.positionCartographic.longitude),
+                      latitude: CesiumMath.toDegrees(camera.positionCartographic.latitude),
+                      height: 0
                   };
-              });
-
-              const validFeatures = featuresToInsert.filter((f: any) => f.position_data !== null);
-
-              if (validFeatures.length === 0) {
-                   throw new Error(t('alerts.coords_error')); // TRADUCERE
               }
 
-              const { error: featuresError } = await supabase
-                  .from('features')
-                  .insert(validFeatures);
+              const { error: featError } = await supabase.from('features').insert([{
+                  layer_id: newLayerId,
+                  position_data: position,
+                  properties: { name: layerName, modelUrl: publicUrl, scale: '1' }
+              }]);
+
+              if (featError) throw new Error(featError.message);
               
-              if (featuresError) throw new Error(t('alerts.db_feature_error', { message: featuresError.message })); // TRADUCERE
-
               fetchData();
-              alert(t('alerts.import_success', { count: validFeatures.length, layerName })); // TRADUCERE
+              alert("Model 3D importat cu succes!");
 
-          } catch (err: any) {
-              console.error("Import failed:", err);
-              alert(t('alerts.import_error', { message: err.message })); // TRADUCERE
-          } finally {
-              setLoading(false);
-              inputElement.value = ''; 
+          } 
+          else {
+              const reader = new FileReader();
+              reader.onload = async (e) => {
+                  try {
+                      const text = e.target?.result;
+                      if (typeof text !== 'string') return;
+                      
+                      const geoJson = JSON.parse(text);
+                      if (!geoJson.features || !Array.isArray(geoJson.features)) throw new Error(t('alerts.format_error'));
+                      
+                      const firstFeature = geoJson.features.find((f: any) => f.geometry);
+                      if (!firstFeature) throw new Error(t('alerts.no_geo_error'));
+                      
+                      const firstType = firstFeature.geometry.type;
+                      let layerType: 'POINT' | 'LINE' | 'POLYGON' = 'POINT';
+                      if (firstType === 'LineString' || firstType === 'MultiLineString') layerType = 'LINE';
+                      else if (firstType === 'Polygon' || firstType === 'MultiPolygon') layerType = 'POLYGON';
+
+                      const allKeys = new Set<string>();
+                      geoJson.features.forEach((f: any) => { if (f.properties) Object.keys(f.properties).forEach(k => allKeys.add(k)); });
+                      allKeys.add('name');
+                      const columns = Array.from(allKeys).map(k => ({ name: k, type: 'text' }));
+                      if (layerType === 'POLYGON' && !allKeys.has('extrudare')) columns.push({ name: 'extrudare', type: 'number' });
+
+                      const baseName = file.name.replace(/\.(geojson|json)$/i, '');
+                      const defaultStyle = layerType === 'POINT' ? { color: COLORS.orange, pixelSize: 15 } : layerType === 'LINE' ? { color: COLORS.cyan, width: 5 } : { color: COLORS.blue, extrudedHeight: 0 };
+
+                      const { data: layerData, error: lErr } = await supabase.from('layers').insert([{ name: baseName, type: layerType, style_props: defaultStyle, visible: true, columns }]).select();
+                      if (lErr || !layerData) throw new Error(t('alerts.layer_create_error'));
+                      
+                      const newLayerId = layerData[0].id;
+                      const featuresToInsert = geoJson.features.map((f: any) => {
+                           const props = f.properties || {};
+                           if (!props.name) props.name = f.id || `Feature ${layerType}`;
+                           if (layerType === 'POLYGON' && !props.extrudare) props.extrudare = '0';
+                           let posData = null;
+                           const c = f.geometry.coordinates;
+                           if (layerType === 'POINT') { const pt = (f.geometry.type==='MultiPoint')?c[0]:c; posData={longitude:Number(pt[0]), latitude:Number(pt[1]), height:Number(pt[2]||0)}; }
+                           else if (layerType === 'LINE') { const lc=(f.geometry.type==='MultiLineString')?c[0]:c; posData=lc.map((x:any)=>({longitude:Number(x[0]), latitude:Number(x[1]), height:Number(x[2]||0)})); }
+                           else { const r=(f.geometry.type==='MultiPolygon')?c[0][0]:c[0]; posData=r.map((x:any)=>({longitude:Number(x[0]), latitude:Number(x[1]), height:Number(x[2]||0)})); }
+                           return { layer_id: newLayerId, position_data: posData, properties: props };
+                      }).filter((f:any) => f.position_data);
+
+                      if(featuresToInsert.length===0) throw new Error(t('alerts.coords_error'));
+                      await supabase.from('features').insert(featuresToInsert);
+                      
+                      fetchData();
+                      alert(t('alerts.import_success', { count: featuresToInsert.length, layerName: baseName }));
+                  } catch (innerErr: any) {
+                      alert(t('alerts.import_error', { message: innerErr.message }));
+                  }
+              };
+              reader.readAsText(file);
           }
-      };
-      reader.readAsText(file);
+
+      } catch (err: any) {
+          console.error("Import failed:", err);
+          alert(`Eroare: ${err.message}`);
+      } finally {
+          setLoading(false);
+          inputElement.value = ''; 
+      }
   };
 
   const handleOnDragEnd = (result: DropResult) => {
@@ -922,84 +924,69 @@ function App() {
 return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', background: '#000', cursor: (isRelocating || isEditingVertices) ? (isSnappingEnabled ? 'copy' : 'grabbing') : 'default' }}>
         
-        {/* HEADER STÂNGA: LOGO + TITLU */}
-        {/* Ajustare: Pe tableta e mai ingust si mai aproape de margine */}
-        <Paper 
-            style={{ 
-                ...glassPanelStyle, 
-                position: 'absolute', 
-                top: isTablet ? 10 : 20, 
-                left: isTablet ? 10 : 20, 
-                zIndex: 10, 
-                borderLeft: `3px solid ${COLORS.blue}`, 
-                width: isTablet ? 'auto' : 300,
-                minWidth: isTablet ? 200 : 300 
-            }} 
-            p="xs" radius="sm"
-        >
+        <Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 10 : 20, left: isTablet ? 10 : 20, zIndex: 10, borderLeft: `3px solid ${COLORS.blue}`, width: isTablet ? 'auto' : 300, minWidth: isTablet ? 200 : 300 }} p="xs" radius="sm">
             <Group gap={10}>
                 <ThemeIcon size="lg" variant="filled" color="terra-blue" radius="sm">
                     <IconLayersIntersect size={20} />
                 </ThemeIcon>
                 <div style={{ lineHeight: 1.1 }}>
-                    <Text fw={900} size={isTablet ? "md" : "lg"} style={{ fontFamily: 'Rajdhani, sans-serif' }}>
-                        TERRA<span style={{ color: COLORS.yellow }}>ASSET</span>
-                    </Text>
-                    {/* Ascundem subtitlul pe tableta pentru a economisi spatiu */}
+                    <Text fw={900} size={isTablet ? "md" : "lg"} style={{ fontFamily: 'Rajdhani, sans-serif' }}>TERRA<span style={{ color: COLORS.yellow }}>ASSET</span></Text>
                     {!isTablet && <Text size="xs" c="dimmed">{t('header.subtitle')}</Text>}
                 </div>
             </Group>
         </Paper>
 
-        {/* HEADER DREAPTA: SELECTOR LIMBĂ */}
-        <Paper 
-            style={{ 
-                ...glassPanelStyle, 
-                position: 'absolute', 
-                top: isTablet ? 10 : 20, 
-                right: isTablet ? 10 : 20, 
-                zIndex: 10 
-            }} 
-            p={4} radius="sm"
-        >
-            <SegmentedControl 
-                size="xs"
-                data={[
-                    { label: 'EN', value: 'en' },
-                    { label: 'DE', value: 'de' },
-                    { label: 'RO', value: 'ro' }
-                ]}
-                value={i18n.language}
-                onChange={changeLanguage}
-                styles={{ 
-                    root: { backgroundColor: 'transparent' }, 
-                    label: { color: 'white', fontWeight: 600 },
-                    control: { border: 'none' }
-                }}
-            />
+        <Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 10 : 20, right: isTablet ? 10 : 20, zIndex: 10 }} p={4} radius="sm">
+            <SegmentedControl size="xs" data={[{ label: 'EN', value: 'en' }, { label: 'DE', value: 'de' }, { label: 'RO', value: 'ro' }]} value={i18n.language} onChange={changeLanguage} styles={{ root: { backgroundColor: 'transparent' }, label: { color: 'white', fontWeight: 600 }, control: { border: 'none' } }} />
         </Paper>
 
-        {/* LAYER MANAGER */}
-        <Paper 
-            style={{ 
-                ...glassPanelStyle, 
-                position: 'absolute', 
-                top: isTablet ? 70 : 90, // Mai sus pe tableta
-                left: isTablet ? 10 : 20, 
-                bottom: openAttributeTableId ? '40%' : (isTablet ? 20 : 30), // Bottom dinamic
-                width: isTablet ? 240 : 300, // Mai ingust pe tableta
-                zIndex: 10, 
-                display: 'flex', 
-                flexDirection: 'column' 
-            }} 
-            radius="sm"
-        >
-            {/* ... CONTINUTUL LAYER MANAGER RAMANE NESCHIMBAT (COPIAZA DE MAI JOS) ... */}
+        {/* --- TOOLBAR MASURATORI --- */}
+        <Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 10 : 20, right: isTablet ? 150 : 170, zIndex: 10 }} p={4} radius="sm">
+            <Group gap={4}>
+                <ActionIcon 
+                    variant={activeTool === 'coords' ? 'filled' : 'subtle'} 
+                    color={activeTool === 'coords' ? 'orange' : 'gray'} 
+                    onClick={() => { clearTools(); setActiveTool('coords'); }}
+                    title={t('tools.coords') || "Coordonate"}
+                >
+                    <IconCrosshair size={20} />
+                </ActionIcon>
+                
+                <ActionIcon 
+                    variant={activeTool === 'measure_dist' ? 'filled' : 'subtle'} 
+                    color={activeTool === 'measure_dist' ? 'cyan' : 'gray'} 
+                    onClick={() => { clearTools(); setActiveTool('measure_dist'); }}
+                    title={t('tools.distance') || "Măsurare Distanță"}
+                >
+                    <IconRuler2 size={20} />
+                </ActionIcon>
+
+                <ActionIcon 
+                    variant={activeTool === 'measure_area' ? 'filled' : 'subtle'} 
+                    color={activeTool === 'measure_area' ? 'yellow' : 'gray'} 
+                    onClick={() => { clearTools(); setActiveTool('measure_area'); }}
+                    title={t('tools.area') || "Măsurare Suprafață"}
+                >
+                    <IconRuler size={20} />
+                </ActionIcon>
+
+                {measurePoints.length > 0 && (
+                    <>
+                        <Divider orientation="vertical" />
+                        <ActionIcon color="red" variant="subtle" onClick={clearTools} title="Curăță">
+                            <IconEraser size={20} />
+                        </ActionIcon>
+                    </>
+                )}
+            </Group>
+        </Paper>
+
+        <Paper style={{ ...glassPanelStyle, position: 'absolute', top: isTablet ? 70 : 90, left: isTablet ? 10 : 20, bottom: openAttributeTableId ? '40%' : (isTablet ? 20 : 30), width: isTablet ? 240 : 300, zIndex: 10, display: 'flex', flexDirection: 'column' }} radius="sm">
             <Box p="sm" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                 <Group justify="space-between" mb="xs">
                     <Text size="xs" fw={700} c="dimmed">{t('layers.title')} ({layers.length})</Text> 
                     <Group gap={5}>
-                        <input type="file" accept=".geojson,.json" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+                        <input type="file" accept=".geojson,.json,.glb,.gltf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
                         <Button size="compact-xs" color="terra-orange" variant="light" leftSection={<IconUpload size={14}/>} onClick={() => fileInputRef.current?.click()}>{t('common.import')}</Button>
                         <Button size="compact-xs" color="terra-blue" variant="filled" leftSection={<IconPlus size={14}/>} onClick={() => setShowNewLayerModal(true)}>{t('layers.new_layer_btn')}</Button>
                     </Group>
@@ -1024,6 +1011,7 @@ return (
                                                                 {layer.type === 'LINE' && <IconRoute size={16} color={COLORS.blue} style={{ opacity: 0.9 }} />}
                                                                 {layer.type === 'POLYGON' && <IconPolygon size={16} color={COLORS.yellow} style={{ opacity: 0.9 }} />}
                                                                 {layer.type === 'COMMENT' && <IconMessageExclamation size={18} color={COLORS.orange} style={{ filter: `drop-shadow(0 0 3px ${COLORS.orange})` }} />}
+                                                                {layer.type === 'MODEL' && <IconCube size={16} color="#A020F0" style={{ opacity: 0.9 }} />}
                                                                 <Text size="sm" fw={700} c="white" style={{ maxWidth: isTablet ? 90 : 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{layer.name}</Text>
                                                             </Group>
                                                             <Group gap={2}>
@@ -1069,9 +1057,7 @@ return (
             </ScrollArea>
         </Paper>
 
-        {/* MODALELE RAMAN LA FEL, DOAR ASIGURA-TE CA SUNT IN CODUL TAU */}
         <Modal opened={!!tempLayerSettings} onClose={() => setTempLayerSettings(null)} title={t('modals.settings_title')} centered styles={{ content: { backgroundColor: '#1A1B1E', color: 'white' }, header: { backgroundColor: '#1A1B1E', color: 'white' } }}>
-             {/* ... CONTINUT MODAL SETARI (neschimbat) ... */}
              {tempLayerSettings && (<Stack>
                 <TextInput label={t('modals.layer_name')} value={tempLayerSettings.name} disabled styles={{ input: { backgroundColor: '#2C2E33', color: '#999' } }}/>
                 {tempLayerSettings.type === 'COMMENT' ? (<div style={{ padding: 10, backgroundColor: 'rgba(220, 38, 38, 0.15)', border: '1px solid #ef4444', borderRadius: 4 }}><Text size="sm" c="red.4" fw={500}>{t('modals.comment_warning')}</Text></div>) : (<><SegmentedControl fullWidth data={[{ label: t('modals.vis_type_single'), value: 'single' }, { label: t('modals.vis_type_unique'), value: 'unique' }]} value={tempLayerSettings.style_props.visType || 'single'} onChange={(val) => setTempLayerSettings({ ...tempLayerSettings, style_props: { ...tempLayerSettings.style_props, visType: val as any } })} mb="xs"/>{(!tempLayerSettings.style_props.visType || tempLayerSettings.style_props.visType === 'single') ? (<ColorInput label={t('modals.color')} value={tempLayerSettings.style_props.color} onChange={(val) => setTempLayerSettings({ ...tempLayerSettings, style_props: { ...tempLayerSettings.style_props, color: val } })} />) : (<Select label={t('modals.choose_column')} placeholder={t('modals.select_column')} data={tempLayerSettings.columns.map(c => c.name)} value={tempLayerSettings.style_props.visColumn || null} onChange={(val) => setTempLayerSettings({ ...tempLayerSettings, style_props: { ...tempLayerSettings.style_props, visColumn: val || undefined } })}/>)}{tempLayerSettings.type !== 'POLYGON' && <NumberInput label={t('modals.size_px')} value={tempLayerSettings.type === 'POINT' ? tempLayerSettings.style_props.pixelSize : tempLayerSettings.style_props.width} onChange={(val) => { const key = tempLayerSettings.type === 'POINT' ? 'pixelSize' : 'width'; setTempLayerSettings({ ...tempLayerSettings, style_props: { ...tempLayerSettings.style_props, [key]: Number(val) } }) }} />}{tempLayerSettings.type === 'POLYGON' && <NumberInput label={t('modals.extrusion')} value={tempLayerSettings.style_props.extrudedHeight} onChange={(val) => setTempLayerSettings({ ...tempLayerSettings, style_props: { ...tempLayerSettings.style_props, extrudedHeight: Number(val) } })} />}</>)}
@@ -1088,7 +1074,6 @@ return (
             </Stack>
         </Modal>
 
-        {/* TOOLBARS CENTRALE - Ajustate pentru tableta (urcate putin mai sus) */}
         {isRelocating && (
             <Paper style={{ ...glassPanelStyle, position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 20, borderColor: isSnappingEnabled ? COLORS.cyan : COLORS.yellow, width: isTablet ? '90%' : 'auto' }} p="md" radius="sm">
                 <Group justify="center">
@@ -1126,10 +1111,8 @@ return (
             </Paper>
         )}
 
-        {/* ATTRIBUTE TABLE - Ajustat margini pentru tableta */}
         {activeTableLayer && (
             <Paper style={{ ...glassPanelStyle, position: 'absolute', bottom: 20, left: isTablet ? 10 : 20, right: isTablet ? 10 : 20, height: isTablet ? '30%' : '35%', zIndex: 20, display: 'flex', flexDirection: 'column' }} radius="sm">
-               {/* CONTINUT TABEL - RAMANE IDENTIC (COPIAZA-L DIN FIXUL ANTERIOR SAU PASTRAZA-L PE CEL EXISTENT) */}
                <Box p="xs" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                     <Group justify="space-between">
                         <Group>
@@ -1177,7 +1160,6 @@ return (
             </Paper>
         )}
 
-        {/* ASSET EDITOR - Pozitionat dinamic */}
         {selectedFeatureId && (
              <div style={{ position: 'absolute', top: isTablet ? 70 : 90, right: isTablet ? 10 : 20, zIndex: 15, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                  <AssetEditor 
@@ -1186,26 +1168,40 @@ return (
                     isNew={false}
                     onSave={handleSaveFeatureEdit}
                     onDelete={handleDeleteFeature}
-                    onCancel={() => setSelectedFeatureId(null)}
+                    onCancel={() => {
+                        setSelectedFeatureId(null);
+                        setLivePreviewAsset(null); 
+                    }}
                     onStartRelocate={startRelocation}
                     onStartVertexEdit={() => setIsEditingVertices(true)}
+                    onLiveUpdate={(updated) => setLivePreviewAsset(updated)}
                  />
              </div>
         )}
 
-        {/* VIEWER CESIUM */}
-        <Viewer 
+<Viewer 
             ref={viewerRef} full selectionIndicator={false} infoBox={false} timeline={false} animation={false} 
             navigationHelpButton={false} sceneModePicker={false} baseLayerPicker={false} homeButton={false} geocoder={false} fullscreenButton={false}
             terrainProvider={terrainProvider}
         >
-             {/* ... RESTUL COMPONENTELOR CESIUM (Tileset, Camera, MapEvents, Entities) RAMAN IDENTICE ... */}
              <Cesium3DTileset url={IonResource.fromAssetId(2275207)} />
-             <CameraFlyTo destination={Cartesian3.fromDegrees(26.056986, 44.442540, 350)} orientation={{ heading: CesiumMath.toRadians(800), pitch: CesiumMath.toRadians(-55), roll: 0.0 }} duration={0} once={true} />
+             <CameraFlyTo destination={Cartesian3.fromDegrees(26.044592, 44.441210, 200)} orientation={{ heading: CesiumMath.toRadians(1800), pitch: CesiumMath.toRadians(-25), roll: 0.0 }} duration={0} once={true} />
              
+             {/* MAP EVENTS ACTUALIZAT */}
              <MapEvents 
-                drawActive={isDrawing} relocateActive={isRelocating} isEditingVertices={isEditingVertices} isSnappingEnabled={isSnappingEnabled} features={features} layers={layers} selectedFeatureId={selectedFeatureId}
-                onLeftClick={handleMapClick} onDoubleClick={handleMapDoubleClick} onMouseMoveGhost={handleMouseMoveGhost} onSelectionChange={setSelectedFeatureId}
+                drawActive={isDrawing} 
+                relocateActive={isRelocating} 
+                isEditingVertices={isEditingVertices} 
+                isSnappingEnabled={isSnappingEnabled} 
+                activeTool={activeTool} 
+                features={features} 
+                layers={layers} 
+                selectedFeatureId={selectedFeatureId}
+                onLeftClick={handleMapClick} 
+                onDoubleClick={handleMapDoubleClick} 
+                onMouseMoveGhost={handleMouseMoveGhost} 
+                onSelectionChange={setSelectedFeatureId}
+                onHoverChange={setHoveredFeatureId}
                 onVertexSelect={(idx) => {
                     if (isEditingVertices) {
                         setActiveVertexIndex(idx);
@@ -1227,19 +1223,105 @@ return (
                 }}
              />
 
+             {/* --- ENTITATI TOOLS --- */}
+             
+             {/* 1. TOOL COORDONATE */}
+             {activeTool === 'coords' && measurePoints.length > 0 && (() => {
+                 const p = measurePoints[0];
+                 const c = Cartographic.fromCartesian(p);
+                 const text = `Lat: ${CesiumMath.toDegrees(c.latitude).toFixed(6)}°\nLon: ${CesiumMath.toDegrees(c.longitude).toFixed(6)}°\nAlt: ${c.height.toFixed(2)}m`;
+                 return (
+                     <Entity position={p}>
+                         <PointGraphics pixelSize={10} color={Color.ORANGE} outlineColor={Color.WHITE} outlineWidth={2} disableDepthTestDistance={Number.POSITIVE_INFINITY}/>
+                         <LabelGraphics 
+                            text={text} showBackground backgroundColor={new Color(0.1, 0.1, 0.1, 0.8)} 
+                            font="14px monospace" style={0} horizontalOrigin={HorizontalOrigin.LEFT} pixelOffset={new Cartesian2(15, 0)} 
+                            disableDepthTestDistance={Number.POSITIVE_INFINITY}
+                         />
+                     </Entity>
+                 );
+             })()}
+
+             {/* 2. TOOL DISTANTA */}
+             {activeTool === 'measure_dist' && (
+                 <>
+                    <Entity>
+                        <PolylineGraphics 
+                            positions={new CallbackProperty(() => cursorPos ? [...measurePoints, cursorPos] : measurePoints, false)} 
+                            width={4} material={Color.CYAN} depthFailMaterial={Color.CYAN}
+                        />
+                    </Entity>
+                    {measurePoints.map((p, i) => (
+                        <Entity key={`dist_pt_${i}`} position={p}>
+                             <PointGraphics pixelSize={8} color={Color.WHITE} />
+                             {i > 0 && (
+                                 <Entity position={Cartesian3.midpoint(measurePoints[i-1], p, new Cartesian3())}>
+                                     <LabelGraphics 
+                                        text={`${Cartesian3.distance(measurePoints[i-1], p).toFixed(1)}m`} 
+                                        font="12px sans-serif" showBackground backgroundColor={Color.BLACK.withAlpha(0.7)}
+                                        disableDepthTestDistance={Number.POSITIVE_INFINITY}
+                                     />
+                                 </Entity>
+                             )}
+                        </Entity>
+                    ))}
+                    {cursorPos && measurePoints.length > 0 && (
+                        <Entity position={Cartesian3.midpoint(measurePoints[measurePoints.length-1], cursorPos, new Cartesian3())}>
+                            <LabelGraphics 
+                                text={`${Cartesian3.distance(measurePoints[measurePoints.length-1], cursorPos).toFixed(1)}m`} 
+                                font="12px sans-serif" showBackground backgroundColor={Color.CYAN.withAlpha(0.7)}
+                            />
+                        </Entity>
+                    )}
+                 </>
+             )}
+
+             {/* 3. TOOL SUPRAFATA */}
+             {activeTool === 'measure_area' && (
+                 <>
+                    <Entity>
+                        <PolygonGraphics 
+                            hierarchy={new CallbackProperty(() => new PolygonHierarchy(cursorPos ? [...measurePoints, cursorPos] : measurePoints), false)}
+                            material={Color.YELLOW.withAlpha(0.3)} outline outlineColor={Color.YELLOW}
+                        />
+                    </Entity>
+                    {measurePoints.map((p, i) => <Entity key={`area_pt_${i}`} position={p} point={{ pixelSize: 8, color: Color.YELLOW }} />)}
+                    
+                    {measurePoints.length >= 2 && (
+                        <Entity position={BoundingSphere.fromPoints(measurePoints).center}>
+                             <LabelGraphics 
+                                text={`${calculateArea(cursorPos ? [...measurePoints, cursorPos] : measurePoints).toFixed(1)} m²`} 
+                                font="16px bold sans-serif" style={0} fillColor={Color.WHITE} showBackground backgroundColor={Color.BLACK.withAlpha(0.7)}
+                                disableDepthTestDistance={Number.POSITIVE_INFINITY}
+                             />
+                        </Entity>
+                    )}
+                 </>
+             )}
+
+             {/* RENDER NORMAL AL LAYERELOR (Rămâne neschimbat, îl ai deja) */}
+{/* RENDER NORMAL AL LAYERELOR - ACTUALIZAT PENTRU TEREN 3D */}
              {layers.filter(l => l.visible).map(layer => {
                 const layerFeatures = features.filter(f => f.layer_id === layer.id);
                 
                 return (
                     <Fragment key={layer.id}>
                         {layerFeatures.map(feature => {
-                            if ((isRelocating || isEditingVertices) && feature.id === selectedFeatureId) return null;
+                            // Logică pentru a ascunde entitatea originală în timpul editării
+                            const isBeingEdited = (isRelocating || isEditingVertices) && feature.id === selectedFeatureId;
+                            const shouldShow = !isBeingEdited;
+
+                            // Verificări de siguranță pentru date corupte
+                            if (!feature.position_data) return null;
 
                             const style = layer.style_props;
                             const extrusionValue = Number(feature.properties.extrude || feature.properties.extrudare) || 0;
                             const isExtruded = extrusionValue > 0;
+                            
                             const isSelected = selectedFeatureId === feature.id;
+                            const isHovered = hoveredFeatureId === feature.id; 
 
+                            // --- CALCUL CULOARE ---
                             let baseColor;
                             if (style.visType === 'unique' && style.visColumn) {
                                 const val = feature.properties[style.visColumn];
@@ -1252,15 +1334,36 @@ return (
                                 baseColor = Color.fromCssColorString(style.color);
                             }
 
-                            const displayColor = isSelected ? Color.WHITE : baseColor;
-                            const outlineColor = isSelected ? Color.BLACK : Color.WHITE;
-                            const alpha = isSelected ? 0.9 : 0.6;
-                            const materialColor = displayColor.withAlpha(alpha);
-                            const outlineWidth = isSelected ? 3 : 1;
+                            let displayColor;
+                            let displayAlpha;
+                            let outlineColor;
+                            let outlineWidth;
 
+                            if (isSelected) {
+                                displayColor = Color.WHITE;
+                                displayAlpha = 0.9;
+                                outlineColor = Color.BLACK;
+                                outlineWidth = 3;
+                            } else if (isHovered) {
+                                displayColor = Color.CYAN; 
+                                displayAlpha = 0.7;
+                                outlineColor = Color.WHITE;
+                                outlineWidth = isExtruded ? 1 : 2; 
+                            } else {
+                                displayColor = baseColor;
+                                displayAlpha = 0.6;
+                                outlineColor = Color.WHITE;
+                                outlineWidth = 1;
+                            }
+
+                            const materialColor = displayColor.withAlpha(displayAlpha);
+
+                            // --- RANDARE COMMENT (BILLBOARD) ---
                             if (layer.type === 'COMMENT') {
-                                const pos = Cartesian3.fromDegrees(feature.position_data.longitude, feature.position_data.latitude, feature.position_data.height);
+                                const p = feature.position_data;
+                                const pos = Cartesian3.fromDegrees(p.longitude, p.latitude, p.height);
                                 return <Entity 
+                                    show={shouldShow}
                                     id={feature.id.toString()}
                                     key={feature.id} 
                                     position={pos} 
@@ -1269,33 +1372,122 @@ return (
                                         width: 40,  
                                         height: 40,
                                         verticalOrigin: VerticalOrigin.BOTTOM, 
-                                        heightReference: HeightReference.RELATIVE_TO_GROUND, 
+                                        heightReference: HeightReference.RELATIVE_TO_GROUND, // <--- IMPORTANT: Se așează pe teren
                                         pixelOffset: new Cartesian2(0, -5), 
                                         scale: isSelected ? 1.3 : 1.0, 
-                                        disableDepthTestDistance: Number.POSITIVE_INFINITY, 
-                                        color: Color.WHITE 
+                                        disableDepthTestDistance: Number.POSITIVE_INFINITY, // <--- IMPORTANT: Se vede prin teren dacă e puțin îngropat
+                                        color: isHovered ? Color.CYAN : Color.WHITE 
                                     }}
                                     description={feature.properties.description || "No description"}
                                 />;
                             }
 
+                            // --- RANDARE POINT ---
                             if (layer.type === 'POINT') {
-                                const pos = Cartesian3.fromDegrees(feature.position_data.longitude, feature.position_data.latitude, feature.position_data.height);
-                                return <Entity id={feature.id.toString()} key={feature.id} position={pos} point={{ pixelSize: style.pixelSize || 10, color: materialColor, outlineColor: outlineColor, outlineWidth: isSelected ? 2 : 0, disableDepthTestDistance: Number.POSITIVE_INFINITY }} />;
-                            } 
+                                const p = feature.position_data;
+                                const pos = Cartesian3.fromDegrees(p.longitude, p.latitude, p.height);
+                                return <Entity 
+                                    show={shouldShow}
+                                    id={feature.id.toString()} 
+                                    key={feature.id} 
+                                    position={pos} 
+                                    point={{ 
+                                        pixelSize: style.pixelSize || 10, 
+                                        color: materialColor, 
+                                        outlineColor: outlineColor, 
+                                        outlineWidth: outlineWidth, 
+                                        heightReference: HeightReference.RELATIVE_TO_GROUND, // <--- IMPORTANT
+                                        disableDepthTestDistance: Number.POSITIVE_INFINITY // <--- IMPORTANT
+                                    }} 
+                                />;
+                            }
+
+                            // --- RANDARE MODEL 3D ---
+                            else if (layer.type === 'MODEL') {
+                                const currentAssetData = (isSelected && livePreviewAsset) 
+                                    ? livePreviewAsset 
+                                    : featureToAsset(feature, layer);
+                                
+                                const pos = Cartesian3.fromDegrees(
+                                    currentAssetData.position_data.longitude, 
+                                    currentAssetData.position_data.latitude, 
+                                    currentAssetData.position_data.height
+                                );
+
+                                const scale = Number(currentAssetData.properties.scale) || 1.0;
+                                const heading = CesiumMath.toRadians(Number(currentAssetData.properties.heading) || 0);
+                                const pitch = CesiumMath.toRadians(Number(currentAssetData.properties.pitch) || 0);
+                                const roll = CesiumMath.toRadians(Number(currentAssetData.properties.roll) || 0);
+
+                                const hpr = new HeadingPitchRoll(heading, pitch, roll);
+                                const orientation = Transforms.headingPitchRollQuaternion(pos, hpr);
+
+                                return (
+                                    <Entity 
+                                        show={shouldShow}
+                                        id={feature.id.toString()}
+                                        key={feature.id} 
+                                        position={pos}
+                                        orientation={orientation}
+                                        model={{
+                                            uri: feature.properties.modelUrl || layer.style_props.modelUrl,
+                                            scale: isSelected ? scale * 1.02 : scale, 
+                                            color: isSelected 
+                                                ? Color.YELLOW.withAlpha(0.4) 
+                                                : (isHovered ? Color.CYAN.withAlpha(0.3) : undefined),
+                                            colorBlendMode: (isSelected || isHovered) ? 1 : 0, 
+                                            heightReference: HeightReference.RELATIVE_TO_GROUND // <--- IMPORTANT
+                                        }}
+                                    />
+                                );
+                            }
+
+                            // --- RANDARE LINE ---
                             else if (layer.type === 'LINE') {
+                                if (!Array.isArray(feature.position_data)) return null; 
                                 const positions = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
-                                return <Entity id={feature.id.toString()} key={feature.id} polyline={{ positions, width: style.width || 5, material: isSelected ? Color.WHITE : baseColor }} />;
+                                return <Entity 
+                                    show={shouldShow}
+                                    id={feature.id.toString()} 
+                                    key={feature.id} 
+                                    polyline={{ 
+                                        positions, 
+                                        width: style.width || 5, 
+                                        material: isSelected ? Color.WHITE : baseColor,
+                                        clampToGround: true // <--- IMPORTANT: Urmărește relieful
+                                    }} 
+                                />;
+                            }
+
+                            // --- RANDARE POLYGON ---
+                            else if (layer.type === 'POLYGON') {
+                                if (!Array.isArray(feature.position_data)) return null; 
+                                const hierarchy = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
+                                return <Entity 
+                                    show={shouldShow}
+                                    id={feature.id.toString()} 
+                                    key={feature.id} 
+                                    polygon={{ 
+                                        hierarchy, 
+                                        extrudedHeight: isExtruded ? (feature.position_data[0].height + extrusionValue) : undefined, 
+                                        perPositionHeight: isExtruded, // Dacă e extrudat, folosește înălțimea punctelor
+                                        classificationType: !isExtruded ? ClassificationType.BOTH : undefined, // Dacă e plat, se mulează pe teren ȘI pe 3D Tiles
+                                        material: materialColor, 
+                                        outline: true, 
+                                        outlineColor: outlineColor, 
+                                        outlineWidth: outlineWidth 
+                                    }} 
+                                />;
                             }
                             else {
-                                const hierarchy = (feature.position_data as any[]).map((p: any) => Cartesian3.fromDegrees(p.longitude, p.latitude, p.height));
-                                return <Entity id={feature.id.toString()} key={feature.id} polygon={{ hierarchy, extrudedHeight: isExtruded ? (feature.position_data[0].height + extrusionValue) : undefined, perPositionHeight: isExtruded, classificationType: !isExtruded ? ClassificationType.CESIUM_3D_TILE : undefined, material: materialColor, outline: true, outlineColor: outlineColor, outlineWidth: outlineWidth }} />;
+                                return null;
                             }
                         })}
                     </Fragment>
                 );
             })}
-             {/* ... GHOST ENTITIES SI HANDLE POINTS PENTRU EDITARE RAMAN IDENTICE ... */}
+             
+             {/* HANDLERS PENTRU VERTEX EDITING */}
              {isEditingVertices && selectedFeatureId && (() => {
                  const feature = features.find(f => f.id === selectedFeatureId);
                  if (!feature || feature.layer_id === undefined) return null;
@@ -1313,22 +1505,36 @@ return (
                  ));
              })()}
 
+            {/* GHOST ENTITIES (Temporare) */}
             {(isRelocating || (isEditingVertices && activeVertexIndex !== null)) && selectedFeatureId && (
                  (() => {
                      const feature = features.find(f => f.id === selectedFeatureId);
                      const layer = layers.find(l => l.id === feature?.layer_id);
                      if (!layer) return null;
-                     if (layer.type === 'POINT' || layer.type === 'COMMENT') {
-                         return <Entity position={ghostPointPosition} point={{ pixelSize: 10, color: layer.type === 'COMMENT' ? Color.RED : Color.CYAN.withAlpha(0.8), outlineColor: Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY }} />;
+
+                     if (layer.type === 'POINT' || layer.type === 'COMMENT' || layer.type === 'MODEL') {
+                         return <Entity 
+                            position={ghostPointPosition} 
+                            point={{ 
+                                pixelSize: 10, 
+                                color: layer.type === 'COMMENT' ? Color.RED : Color.CYAN.withAlpha(0.8), 
+                                outlineColor: Color.WHITE, 
+                                outlineWidth: 2, 
+                                disableDepthTestDistance: Number.POSITIVE_INFINITY 
+                            }} 
+                         />;
                      } else if (layer.type === 'LINE') {
                          return <Entity polyline={{ positions: ghostShapePositions, width: 6, material: Color.CYAN.withAlpha(0.8) }} />;
-                     } else {
+                     } else if (layer.type === 'POLYGON') {
                          const extrusionValue = Number(feature?.properties.extrudare) || 0;
                          const isExtruded = extrusionValue > 0;
                          return <Entity polygon={{ hierarchy: ghostPolygonHierarchy, material: Color.CYAN.withAlpha(0.4), outline: true, outlineColor: Color.WHITE, outlineWidth: 3, extrudedHeight: isExtruded ? new CallbackProperty(() => { const pos = ghostPositionRef.current; if(!pos || !pos[0]) return undefined; const c = Cartographic.fromCartesian(pos[0]); return c.height + extrusionValue; }, false) : undefined, perPositionHeight: true, classificationType: undefined }} />;
+                     } else {
+                        return null;
                      }
                  })()
              )}
+             
              {isDrawing && tempPoints.length > 0 && (<Entity><PolylineGraphics positions={tempPoints} width={2} material={Color.YELLOW} />{tempPoints.map((p, i) => <Entity key={i} position={p} point={{ pixelSize: 8, color: Color.YELLOW }} />)}</Entity>)}
         </Viewer>
     </div>
