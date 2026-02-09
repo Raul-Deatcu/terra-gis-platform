@@ -87,215 +87,205 @@ export function AssetEditor({ asset, layer, isNew, onSave, onDelete, onCancel, o
       setFormData({ ...formData, position_data: newPositionData });
   };
 
-  if (!formData) return null;
+if (!formData) return null;
 
   const isPoint = formData.asset_type === 'POINT' || formData.asset_type === 'COMMENT' || formData.asset_type === 'MODEL';
   const isModel = formData.asset_type === 'MODEL';
   const isPolygon = formData.asset_type === 'POLYGON';
   const extrusionKey = layer.columns?.find(c => c.name === 'extrude')?.name || 'extrudare';
+  
+  // Calculam inaltimea maxima disponibila pentru panou
+  const panelMaxHeight = isTablet ? 'calc(100dvh - 90px)' : 'calc(100dvh - 120px)';
 
   return (
     <Paper 
       shadow="xl" p="md" 
-      // RESPONSIVE WIDTH: 340px pe Desktop, 260px pe Tableta
       w={isTablet ? 260 : 340} 
       bg="dark.8" 
       style={{ 
         border: '1px solid rgba(255, 255, 255, 0.1)',
         backdropFilter: 'blur(10px)',
-        backgroundColor: 'rgba(11, 15, 25, 0.95)'
+        backgroundColor: 'rgba(11, 15, 25, 0.95)',
+        maxHeight: panelMaxHeight, // Limitare inaltime panou
+        display: 'flex',
+        flexDirection: 'column'
       }}
     >
-      <ScrollArea.Autosize mah={isTablet ? 'calc(100dvh - 160px)' : '80vh'} type="scroll">
-      <Stack gap="xs">
-        <Group justify="space-between" mb="xs">
-            <div style={{ lineHeight: 1.1 }}>
-                <Title order={5} c="white">
-                {isNew ? t('editor.new_entity') : t('editor.edit_entity', { id: formData.id })}
-                </Title>
-                <Text size="xs" c="dimmed">{t('editor.layer_label', { name: layer.name })}</Text>
-            </div>
-            <Badge variant="outline" color={layer.style_props.color}>
-                {formData.asset_type}
-            </Badge>
-        </Group>
-        
-        {/* SECȚIUNEA COORDONATE */}
-        <Divider my="xs" label={t('editor.geometry_section')} labelPosition="center" color="dark.4" />
-        
-        {isPoint ? (
-            <>
-                {/* ... inputs longitude/latitude ... */}
-                <NumberInput
-                    label={t('editor.coord_z')} decimalScale={2}
-                    value={formData.position_data.height || 0}
-                    onChange={(val) => updateCoordinate('height', Number(val))}
-                    // Textul pentru inaltime cu Galben
-                    styles={{ input: { color: '#FDC203', fontWeight: 'bold' } }}
-                    mb="xs" 
-                />
-                {/* Buton editare vertex cu Portocaliu */}
-                {onStartVertexEdit && (
+      <ScrollArea.Autosize mah={panelMaxHeight} type="scroll" offsetScrollbars>
+          <Stack gap="xs">
+            <Group justify="space-between" mb="xs">
+                <div style={{ lineHeight: 1.1 }}>
+                    <Title order={5} c="white">
+                    {isNew ? t('editor.new_entity') : t('editor.edit_entity', { id: formData.id })}
+                    </Title>
+                    <Text size="xs" c="dimmed">{t('editor.layer_label', { name: layer.name })}</Text>
+                </div>
+                <Badge variant="outline" color={layer.style_props.color}>
+                    {formData.asset_type}
+                </Badge>
+            </Group>
+            
+            <Divider my="xs" label={t('editor.geometry_section')} labelPosition="center" color="dark.4" />
+            
+            {isPoint ? (
+                <>
+                    <NumberInput
+                        label={t('editor.coord_z')} decimalScale={2}
+                        value={formData.position_data.height || 0}
+                        onChange={(val) => updateCoordinate('height', Number(val))}
+                        styles={{ input: { color: '#FDC203', fontWeight: 'bold' } }}
+                        mb="xs" 
+                    />
+                    {onStartVertexEdit && (
+                        <Button 
+                            fullWidth variant="light" color="terra-orange" size="xs"
+                            leftSection={<IconEdit size={16}/>}
+                            onClick={onStartVertexEdit}
+                        >
+                            {t('editor.btn_move_vertex')}
+                        </Button>
+                    )}
+                </>
+            ) : (
+                <Stack gap={6}> 
                     <Button 
-                        fullWidth variant="light" color="terra-orange" size="xs"
-                        leftSection={<IconEdit size={16}/>}
-                        onClick={onStartVertexEdit}
+                        fullWidth variant="light" color="terra-yellow" size="xs"
+                        leftSection={<IconMapPinFilled size={16}/>}
+                        onClick={onStartRelocate}
+                        style={{ color: '#FDC203' }}
                     >
-                        {t('editor.btn_move_vertex')}
+                        {t('editor.btn_move_geo')}
                     </Button>
-                )}
-            </>
-        ) : (
-            <Stack gap={6}> 
-                {/* Buton mutare cu Galben (mai prudent) */}
-                <Button 
-                    fullWidth variant="light" color="terra-yellow" size="xs"
-                    leftSection={<IconMapPinFilled size={16}/>}
-                    onClick={onStartRelocate}
-                    style={{ color: '#FDC203' }} // Fortam culoarea textului pentru vizibilitate pe fundal deschis
-                >
-                    {t('editor.btn_move_geo')}
-                </Button>
 
-                {/* Buton vertex cu Portocaliu */}
-                {onStartVertexEdit && (
-                    <Button 
-                        fullWidth variant="light" color="terra-orange" size="xs"
-                        leftSection={<IconEdit size={16}/>}
-                        onClick={onStartVertexEdit}
-                    >
-                        {t('editor.btn_edit_vertices')}
-                    </Button>
+                    {onStartVertexEdit && (
+                        <Button 
+                            fullWidth variant="light" color="terra-orange" size="xs"
+                            leftSection={<IconEdit size={16}/>}
+                            onClick={onStartVertexEdit}
+                        >
+                            {t('editor.btn_edit_vertices')}
+                        </Button>
+                    )}
+                </Stack>
+            )}
+
+            {isModel && (
+                 <div style={{ marginTop: 10, marginBottom: 10 }}>
+                    <Divider my="xs" label="Transformări 3D" labelPosition="center" color="dark.4" />
+                    
+                    <Group justify="space-between" mb={2}>
+                        <Text size="sm" fw={500} c="terra-orange">Scară (Scale)</Text>
+                        <Text size="xs" c="dimmed">{Number(formData.properties.scale || 1).toFixed(1)}x</Text>
+                    </Group>
+                    <Slider 
+                        min={0.1} max={20} step={0.1} color="terra-orange"
+                        value={Number(formData.properties.scale || 1)}
+                        onChange={(val) => setFormData({
+                            ...formData, 
+                            properties: { ...formData.properties, scale: String(val) }
+                        })}
+                        mb="xs"
+                    />
+
+                    <Group justify="space-between" mb={2}>
+                        <Text size="sm" fw={500} c="terra-blue">Rotire (Heading)</Text>
+                        <Text size="xs" c="dimmed">{Number(formData.properties.heading || 0).toFixed(0)}°</Text>
+                    </Group>
+                    <Slider 
+                        min={0} max={360} step={1} color="terra-blue"
+                        value={Number(formData.properties.heading || 0)}
+                        onChange={(val) => setFormData({
+                            ...formData, 
+                            properties: { ...formData.properties, heading: String(val) }
+                        })}
+                        mb="xs"
+                    />
+
+                    <Group justify="space-between" mb={2}>
+                        <Text size="sm" fw={500} c="gray.5">Înclinare (Pitch)</Text>
+                        <Text size="xs" c="dimmed">{Number(formData.properties.pitch || 0).toFixed(0)}°</Text>
+                    </Group>
+                    <Slider 
+                        min={-90} max={90} step={1} color="gray" size="sm"
+                        value={Number(formData.properties.pitch || 0)}
+                        onChange={(val) => setFormData({
+                            ...formData, 
+                            properties: { ...formData.properties, pitch: String(val) }
+                        })}
+                        mb="xs"
+                    />
+                 </div>
+            )}
+
+            {isPolygon && (
+                 <div style={{ marginTop: 10 }}>
+                    <Group justify="space-between">
+                        <Text size="sm" fw={500} c="terra-orange">{t('editor.extrusion_label')}</Text>
+                        <Text size="xs" c="dimmed">{formData.properties[extrusionKey] || 0} {t('editor.unit_meters')}</Text>
+                    </Group>
+                    <Slider 
+                        min={0} max={300} color="terra-orange"
+                        value={Number(formData.properties[extrusionKey] || 0)}
+                        onChange={(val) => setFormData({
+                            ...formData, 
+                            properties: { ...formData.properties, [extrusionKey]: String(val) }
+                        })}
+                        mb="xs" mt={4}
+                    />
+                 </div>
+            )}
+
+            <Divider my="xs" label={t('editor.attributes_section')} labelPosition="center" color="dark.4" />
+
+            <Stack gap={8}>
+                <TextInput
+                    label={t('editor.name_label')}
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
+
+                {layer.columns && layer.columns.length > 0 ? (
+                    layer.columns.map((col, index) => {
+                        if (isPolygon && col.name === extrusionKey) return null;
+
+                        return (
+                            <TextInput
+                                key={index}
+                                label={col.name}
+                                placeholder={`...`}
+                                value={formData.properties[col.name] || ''}
+                                onChange={(e) => {
+                                    const newProps = { ...formData.properties, [col.name]: e.target.value };
+                                    setFormData({ ...formData, properties: newProps });
+                                }}
+                            />
+                        )
+                    })
+                ) : (
+                    <Text size="xs" c="dimmed" ta="center">{t('table.no_cols')}</Text>
                 )}
             </Stack>
-        )}
 
-        {/* SECȚIUNEA SCARĂ (DOAR PENTRU MODEL) */}
-{/* SECȚIUNEA MODEL 3D (SCARĂ ȘI ROTAȚIE) */}
-        {isModel && (
-             <div style={{ marginTop: 10, marginBottom: 10 }}>
-                <Divider my="xs" label="Transformări 3D" labelPosition="center" color="dark.4" />
-                
-                {/* 1. SCARĂ */}
-                <Group justify="space-between" mb={2}>
-                    <Text size="sm" fw={500} c="terra-orange">Scară (Scale)</Text>
-                    <Text size="xs" c="dimmed">{Number(formData.properties.scale || 1).toFixed(1)}x</Text>
+            <Divider my="md" />
+
+            <Group justify="space-between">
+                {!isNew ? (
+                    <Button color="red" variant="subtle" size="xs" onClick={() => onDelete(formData.id)}>{t('common.delete')}</Button>
+                ) : <div></div>}
+
+                <Group gap="xs">
+                    <Button variant="default" size="xs" onClick={onCancel}>{t('common.cancel')}</Button>
+                    <Button 
+                        color="terra-blue" size="xs" leftSection={<IconDeviceFloppy size={16}/>}
+                        onClick={handleSaveInternal}
+                    >
+                        {isNew ? t('common.create') : t('common.save')}
+                    </Button>
                 </Group>
-                <Slider 
-                    min={0.1} max={20} step={0.1} color="terra-orange"
-                    value={Number(formData.properties.scale || 1)}
-                    onChange={(val) => setFormData({
-                        ...formData, 
-                        properties: { ...formData.properties, scale: String(val) }
-                    })}
-                    mb="xs"
-                />
-
-                {/* 2. ROTAȚIE (HEADING - Stânga/Dreapta) */}
-                <Group justify="space-between" mb={2}>
-                    <Text size="sm" fw={500} c="terra-blue">Rotire (Heading)</Text>
-                    <Text size="xs" c="dimmed">{Number(formData.properties.heading || 0).toFixed(0)}°</Text>
-                </Group>
-                <Slider 
-                    min={0} max={360} step={1} color="terra-blue"
-                    value={Number(formData.properties.heading || 0)}
-                    onChange={(val) => setFormData({
-                        ...formData, 
-                        properties: { ...formData.properties, heading: String(val) }
-                    })}
-                    mb="xs"
-                />
-
-                {/* 3. ROTAȚIE (PITCH & ROLL - Opțional, Expandabil) */}
-                <Group justify="space-between" mb={2}>
-                    <Text size="sm" fw={500} c="gray.5">Înclinare (Pitch)</Text>
-                    <Text size="xs" c="dimmed">{Number(formData.properties.pitch || 0).toFixed(0)}°</Text>
-                </Group>
-                <Slider 
-                    min={-90} max={90} step={1} color="gray" size="sm"
-                    value={Number(formData.properties.pitch || 0)}
-                    onChange={(val) => setFormData({
-                        ...formData, 
-                        properties: { ...formData.properties, pitch: String(val) }
-                    })}
-                    mb="xs"
-                />
-             </div>
-        )}
-
-        {/* SECȚIUNEA VOLUMETRIE (DOAR PENTRU POLYGON) */}
-        {isPolygon && (
-             <div style={{ marginTop: 10 }}>
-                <Group justify="space-between">
-                    {/* Eticheta cu Portocaliu */}
-                    <Text size="sm" fw={500} c="terra-orange">{t('editor.extrusion_label')}</Text>
-                    <Text size="xs" c="dimmed">{formData.properties[extrusionKey] || 0} {t('editor.unit_meters')}</Text>
-                </Group>
-                {/* Slider cu Portocaliu */}
-                <Slider 
-                    min={0} max={300} color="terra-orange"
-                    value={Number(formData.properties[extrusionKey] || 0)}
-                    onChange={(val) => setFormData({
-                        ...formData, 
-                        properties: { ...formData.properties, [extrusionKey]: String(val) }
-                    })}
-                    mb="xs" mt={4}
-                />
-             </div>
-        )}
-
-        {/* ATRIBUTE DIN LAYER */}
-        <Divider my="xs" label={t('editor.attributes_section')} labelPosition="center" color="dark.4" />
-
-        <Stack gap={8}>
-            <TextInput
-                label={t('editor.name_label')}
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            />
-
-            {layer.columns && layer.columns.length > 0 ? (
-                layer.columns.map((col, index) => {
-                    // Ascundem campul dacă este cel folosit pentru extrudare (controlat de slider)
-                    if (isPolygon && col.name === extrusionKey) return null;
-
-                    return (
-                        <TextInput
-                            key={index}
-                            label={col.name}
-                            placeholder={`...`}
-                            value={formData.properties[col.name] || ''}
-                            onChange={(e) => {
-                                const newProps = { ...formData.properties, [col.name]: e.target.value };
-                                setFormData({ ...formData, properties: newProps });
-                            }}
-                        />
-                    )
-                })
-            ) : (
-                <Text size="xs" c="dimmed" ta="center">{t('table.no_cols')}</Text>
-            )}
-        </Stack>
-
-        <Divider my="md" />
-
-        <Group justify="space-between">
-            {!isNew ? (
-                <Button color="red" variant="subtle" size="xs" onClick={() => onDelete(formData.id)}>{t('common.delete')}</Button>
-            ) : <div></div>}
-
-            <Group gap="xs">
-                <Button variant="default" size="xs" onClick={onCancel}>{t('common.cancel')}</Button>
-                {/* Butonul de Save cu Albastru */}
-                <Button 
-                    color="terra-blue" size="xs" leftSection={<IconDeviceFloppy size={16}/>}
-                    onClick={handleSaveInternal}
-                >
-                    {isNew ? t('common.create') : t('common.save')}
-                </Button>
             </Group>
-        </Group>
-      </Stack>
+            {/* Spatiu gol la final pentru scroll */}
+            <div style={{ minHeight: 20 }}></div>
+          </Stack>
       </ScrollArea.Autosize>
     </Paper>
   );
